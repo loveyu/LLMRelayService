@@ -22,7 +22,6 @@ import type {
   UpdateModelMetadataPayload,
   RustProxyStatus,
 } from "@/features/dashboard/types"
-import { toast } from "@/components/ui/toast"
 
 export const DEFAULT_REQUEST_LIMIT = 50
 export const DEFAULT_REQUEST_OFFSET = 0
@@ -56,16 +55,17 @@ export async function requestJson(url: string, init?: RequestInit, timingLabel?:
   const parsedAt = performance.now()
 
   if (timingLabel) {
-    // Temporary mobile diagnostics; remove after remote latency investigation.
     const waitMs = headersAt - startedAt
     const downloadMs = bodyAt - headersAt
     const parseMs = parsedAt - bodyAt
     const totalMs = parsedAt - startedAt
-    const sizeKb = new Blob([text]).size / 1024
-    toast(
-      `${timingLabel}：等待 ${waitMs.toFixed(0)}ms · 下载 ${downloadMs.toFixed(0)}ms · 解析 ${parseMs.toFixed(0)}ms · 总计 ${totalMs.toFixed(0)}ms · ${sizeKb.toFixed(1)}KB`,
-      { duration: 5000 },
-    )
+    console.info(`[LRS Performance] ${timingLabel}`, {
+      waitMs: Math.round(waitMs),
+      downloadMs: Math.round(downloadMs),
+      parseMs: Math.round(parseMs),
+      totalMs: Math.round(totalMs),
+      sizeKb: Number((new Blob([text]).size / 1024).toFixed(1)),
+    })
   }
 
   if (!response.ok) {

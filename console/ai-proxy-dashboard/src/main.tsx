@@ -7,11 +7,21 @@ import App from "./App.tsx"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/toast"
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <ThemeProvider defaultTheme="system" storageKey="lrs-theme">
-      <App />
-      <Toaster />
-    </ThemeProvider>
-  </StrictMode>
-)
+async function bootstrap() {
+  if (import.meta.env.DEV) {
+    const { default: VConsole } = await import("vconsole")
+    new VConsole()
+    console.info("[LRS] vConsole enabled for development")
+  }
+
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <ThemeProvider defaultTheme="system" storageKey="lrs-theme">
+        <App />
+        <Toaster />
+      </ThemeProvider>
+    </StrictMode>
+  )
+}
+
+void bootstrap()
