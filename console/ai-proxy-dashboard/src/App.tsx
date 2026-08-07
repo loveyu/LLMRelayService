@@ -167,7 +167,7 @@ export function App() {
       <main className={`flex-1 ${activePage === "logs" ? "overflow-hidden" : "overflow-y-auto"}`}>
         <div
           className={`${fullWidth ? "" : "mx-auto max-w-[1540px]"} flex ${activePage === "logs" ? "h-full" : "min-h-[calc(100vh-4.25rem)]"} flex-col ${
-            activePage === "monitor" ? "" : "px-5 py-5 lg:px-8 lg:py-7"
+            activePage === "monitor" ? "" : "px-3 py-3 sm:px-5 sm:py-5 lg:px-8 lg:py-7"
           }`}
         >
           {renderPage()}

@@ -87,7 +87,7 @@ export function RustProxyPage({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 sm:gap-6">
       <PageHeader
         icon={Cpu}
         title="Rust 代理引擎"
@@ -234,7 +234,7 @@ function Stat({
 
 function RustProxyPageSkeleton() {
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 sm:gap-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Skeleton className="h-5 w-5 rounded" />

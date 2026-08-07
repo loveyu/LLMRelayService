@@ -1829,7 +1829,7 @@ export function ProvidersPage({
 
 function ProvidersPageSkeleton() {
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 sm:gap-6">
       <Card>
         <CardHeader className="flex flex-col gap-2">
           <Skeleton className="h-6 w-40" />

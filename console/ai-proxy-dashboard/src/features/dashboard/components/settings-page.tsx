@@ -265,7 +265,7 @@ export function SettingsPage({ onUnauthorized }: { onUnauthorized: () => void })
   const runtime = settings?.runtime
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 sm:gap-6">
       {/* Toolbar — actions */}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void loadSettings()}>

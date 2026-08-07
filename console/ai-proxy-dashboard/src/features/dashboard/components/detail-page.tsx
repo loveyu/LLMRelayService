@@ -58,7 +58,7 @@ export function DetailPage({
   }, [loadDetail])
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 sm:gap-6">
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button" variant="outline" size="sm" onClick={onBack}>
           {t("detail.backToLogs")}

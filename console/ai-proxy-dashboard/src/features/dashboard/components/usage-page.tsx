@@ -113,7 +113,7 @@ export function UsagePage({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 sm:gap-6">
       {/* Group tabs + range/export + actions */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border">
         <div className="flex">
