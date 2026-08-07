@@ -35,6 +35,7 @@ export function LogsPage({
 }: {
   onUnauthorized: () => void
 }) {
+  const isMobile = useIsMobile()
   const {
     loading,
     refreshing,
@@ -46,7 +47,7 @@ export function LogsPage({
     filterOptions,
     sortBy,
     sortOrder,
-  } = useDashboardData(onUnauthorized)
+  } = useDashboardData(onUnauthorized, isMobile ? 10 : undefined)
 
   const [searchQuery, setSearchQuery] = useState("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
@@ -63,7 +64,6 @@ export function LogsPage({
   const [detailLoading, setDetailLoading] = useState(false)
   const detailLoadRef = useRef(0)
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
 
   useEffect(() => {
     if (!selectedId) {
@@ -112,13 +112,7 @@ export function LogsPage({
     cache: cacheFilter || undefined,
   }), [debouncedSearchQuery, routeFilter, modelFilter, sourceTypeFilter, statusFilter, cacheFilter])
 
-  const isFirstRenderRef = useRef(true)
   useEffect(() => {
-    if (isFirstRenderRef.current) {
-      isFirstRenderRef.current = false
-      void refreshDashboard({ filters })
-      return
-    }
     void refreshDashboard({ filters, offset: 0 })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters])

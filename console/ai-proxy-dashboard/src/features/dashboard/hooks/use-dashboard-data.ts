@@ -22,12 +22,12 @@ export interface RequestFilters {
   cache?: string;
 }
 
-export function useDashboardData(onUnauthorized: () => void) {
+export function useDashboardData(onUnauthorized: () => void, initialLimit = DEFAULT_REQUEST_LIMIT) {
   const [requests, setRequests] = useState<ConsoleRequestListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [total, setTotal] = useState(0)
-  const [limit, setLimit] = useState(DEFAULT_REQUEST_LIMIT)
+  const [limit, setLimit] = useState(initialLimit)
   const [offset, setOffset] = useState(DEFAULT_REQUEST_OFFSET)
   const [sortBy, setSortBy] = useState<RequestSortKey>('created_at')
   const [sortOrder, setSortOrder] = useState<SortDirection>('desc')
@@ -39,7 +39,7 @@ export function useDashboardData(onUnauthorized: () => void) {
   const loadIdRef = useRef(0)
 
   // Refs 保存最新的可变值，供稳定回调读取，避免闭包捕获旧值
-  const limitRef = useRef(DEFAULT_REQUEST_LIMIT)
+  const limitRef = useRef(initialLimit)
   const offsetRef = useRef(DEFAULT_REQUEST_OFFSET)
   const sortByRef = useRef<RequestSortKey>('created_at')
   const sortOrderRef = useRef<SortDirection>('desc')
