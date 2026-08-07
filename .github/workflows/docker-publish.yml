@@ -54,17 +54,14 @@ jobs:
       - name: Rust clippy
         run: cd rust-proxy && cargo clippy -- -D warnings
 
-      - name: Rust build (release, amd64 musl)
-        run: |
-          cd rust-proxy
-          rustup target add x86_64-unknown-linux-musl
-          cargo build --release --target x86_64-unknown-linux-musl
+      - name: Rust build (release)
+        run: cd rust-proxy && cargo build --release
 
       - name: Upload Rust binary
         uses: actions/upload-artifact@v4
         with:
           name: rust-proxy
-          path: rust-proxy/target/x86_64-unknown-linux-musl/release/rust-proxy
+          path: rust-proxy/target/release/rust-proxy
           retention-days: 1
 
   build-and-push:
