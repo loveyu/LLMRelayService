@@ -283,6 +283,7 @@ pub async fn proxy_handler(
                     let body_content = result.body_content.clone();
                     let ttfb_ms = t_ttfb.as_millis() as u64;
                     let first_chunk = created_at.checked_add(ttfb_ms);
+                    let stop_reason = body_content.as_deref().and_then(extract_stop_reason);
                     {
                         let ipc = state.ipc.clone();
                         let rid = request_id.clone();
@@ -305,7 +306,7 @@ pub async fn proxy_handler(
                                 completed_at: Some(now),
                                 has_streaming_content: is_sse_val,
                                 response_model: route.resolved_model.clone(),
-                                stop_reason: None,
+                                stop_reason,
                                 input_tokens,
                                 output_tokens,
                                 total_tokens,
@@ -697,6 +698,13 @@ async fn build_response(
 
 fn extract_usage(body: &str) -> Option<serde_json::Value> {
     serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| v.get("usage").cloned())
+}
+
+fn extract_stop_reason(body: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("stop_reason").cloned())
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
 }
 
 struct CacheTokens {
