@@ -192,10 +192,11 @@ pub async fn proxy_handler(
             }
             // Rewrite model name if resolved (alias or model-based route)
             if let Some(ref resolved) = route.resolved_model
-                && let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&b) {
-                    json["model"] = serde_json::Value::String(resolved.clone());
-                    b = serde_json::to_vec(&json).unwrap_or(b);
-                }
+                && let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&b)
+            {
+                json["model"] = serde_json::Value::String(resolved.clone());
+                b = serde_json::to_vec(&json).unwrap_or(b);
+            }
             // Anthropic-specific transforms
             if transform::is_anthropic(&route.upstream_type) && !b.is_empty() {
                 transform::prepare_anthropic_request(
@@ -558,9 +559,10 @@ async fn build_response(
             continue;
         }
         if let Ok(name) = HeaderName::from_bytes(key.as_str().as_bytes())
-            && let Ok(val) = HeaderValue::from_bytes(value.as_bytes()) {
-                response_builder = response_builder.header(name, val);
-            }
+            && let Ok(val) = HeaderValue::from_bytes(value.as_bytes())
+        {
+            response_builder = response_builder.header(name, val);
+        }
     }
 
     if is_sse {

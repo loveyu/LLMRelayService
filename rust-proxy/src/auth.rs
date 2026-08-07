@@ -78,9 +78,10 @@ fn extract_credentials(headers: &axum::http::HeaderMap) -> Vec<String> {
     }
 
     if let Some(val) = headers.get("authorization").and_then(|v| v.to_str().ok())
-        && let Some(token) = val.strip_prefix("Bearer ") {
-            creds.push(token.trim().to_string());
-        }
+        && let Some(token) = val.strip_prefix("Bearer ")
+    {
+        creds.push(token.trim().to_string());
+    }
 
     creds
 }

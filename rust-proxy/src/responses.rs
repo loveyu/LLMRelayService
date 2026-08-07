@@ -60,19 +60,22 @@ pub fn convert_responses_to_chat_request(body: &[u8]) -> Result<Vec<u8>, (u16, S
 
     if let Some(tc) = input.get("tool_choice")
         && has_tools
-            && let Some(converted) = convert_tool_choice(tc) {
-                chat.insert("tool_choice".to_string(), converted);
-            }
+        && let Some(converted) = convert_tool_choice(tc)
+    {
+        chat.insert("tool_choice".to_string(), converted);
+    }
 
     if let Some(text) = input.get("text")
-        && let Some(rf) = convert_text_format(text) {
-            chat.insert("response_format".to_string(), rf);
-        }
+        && let Some(rf) = convert_text_format(text)
+    {
+        chat.insert("response_format".to_string(), rf);
+    }
 
     if let Some(reasoning) = input.get("reasoning")
-        && let Some(effort) = reasoning.get("effort").and_then(|v| v.as_str()) {
-            chat.insert("reasoning_effort".to_string(), Value::String(effort.to_string()));
-        }
+        && let Some(effort) = reasoning.get("effort").and_then(|v| v.as_str())
+    {
+        chat.insert("reasoning_effort".to_string(), Value::String(effort.to_string()));
+    }
 
     serde_json::to_vec(&Value::Object(chat)).map_err(|e| (500, format!("Serialization error: {e}")))
 }
@@ -98,9 +101,10 @@ fn convert_input_to_messages(input: &Value) -> Result<Vec<Value>, (u16, String)>
     }
 
     if let Some(instructions) = input.get("instructions").and_then(|v| v.as_str())
-        && !instructions.is_empty() {
-            messages.insert(0, json!({"role": "system", "content": instructions}));
-        }
+        && !instructions.is_empty()
+    {
+        messages.insert(0, json!({"role": "system", "content": instructions}));
+    }
 
     merge_leading_system_messages(&mut messages);
 
@@ -144,13 +148,15 @@ fn convert_input_item(item: &Value, prefix: &str) -> Result<Option<Value>, (u16,
     }
 
     if role == "tool"
-        && let Some(call_id) = obj.get("tool_call_id").or(obj.get("call_id")) {
-            msg["tool_call_id"] = call_id.clone();
-        }
+        && let Some(call_id) = obj.get("tool_call_id").or(obj.get("call_id"))
+    {
+        msg["tool_call_id"] = call_id.clone();
+    }
     if role == "assistant"
-        && let Some(tool_calls) = obj.get("tool_calls") {
-            msg["tool_calls"] = tool_calls.clone();
-        }
+        && let Some(tool_calls) = obj.get("tool_calls")
+    {
+        msg["tool_calls"] = tool_calls.clone();
+    }
 
     Ok(Some(msg))
 }
@@ -555,34 +561,35 @@ impl ChatSseToResponsesSse {
 
             // Tool calls
             if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array())
-                && !tool_calls.is_empty() {
-                    if self.text_started {
-                        self.flush_text_to_output(&mut events);
-                    }
-                    self.thinking_started = false;
-                    for tc in tool_calls {
-                        let index = tc["index"].as_u64().unwrap_or(0);
-                        let id = tc["id"].as_str().unwrap_or("");
-                        let func_name = tc["function"]["name"].as_str().unwrap_or("");
-                        let func_args = tc["function"]["arguments"].as_str().unwrap_or("");
-                        events.push(format!(
-                            "event: response.output_item.added\ndata: {}\n\n",
-                            json!({
-                                "type": "response.output_item.added",
-                                "output_index": index,
-                                "item": {
-                                    "id": format!("fc_{}", id),
-                                    "type": "function_call",
-                                    "call_id": id,
-                                    "name": func_name,
-                                    "arguments": func_args,
-                                    "status": "completed",
-                                },
-                                "response_id": self.response_id,
-                            })
-                        ));
-                    }
+                && !tool_calls.is_empty()
+            {
+                if self.text_started {
+                    self.flush_text_to_output(&mut events);
                 }
+                self.thinking_started = false;
+                for tc in tool_calls {
+                    let index = tc["index"].as_u64().unwrap_or(0);
+                    let id = tc["id"].as_str().unwrap_or("");
+                    let func_name = tc["function"]["name"].as_str().unwrap_or("");
+                    let func_args = tc["function"]["arguments"].as_str().unwrap_or("");
+                    events.push(format!(
+                        "event: response.output_item.added\ndata: {}\n\n",
+                        json!({
+                            "type": "response.output_item.added",
+                            "output_index": index,
+                            "item": {
+                                "id": format!("fc_{}", id),
+                                "type": "function_call",
+                                "call_id": id,
+                                "name": func_name,
+                                "arguments": func_args,
+                                "status": "completed",
+                            },
+                            "response_id": self.response_id,
+                        })
+                    ));
+                }
+            }
 
             // Flush on finish
             if finish_reason.is_some() {

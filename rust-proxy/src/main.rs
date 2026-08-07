@@ -87,11 +87,12 @@ async fn models_handler(
     let mut model_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for entry in rt.providers.values() {
         if entry.enabled
-            && let Some(ref entry_models) = entry.models {
-                for m in entry_models {
-                    model_set.insert(m.model.clone());
-                }
+            && let Some(ref entry_models) = entry.models
+        {
+            for m in entry_models {
+                model_set.insert(m.model.clone());
             }
+        }
     }
     // Also collect alias names
     for alias in rt.aliases.keys() {

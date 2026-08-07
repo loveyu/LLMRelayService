@@ -14,9 +14,7 @@ const MAX_FRAME_LENGTH: usize = 16 * 1024 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TsToRustMessage {
-    SyncConfig {
-        payload: Box<SyncConfigPayload>,
-    },
+    SyncConfig { payload: Box<SyncConfigPayload> },
     ReloadConfig,
     Ping { timestamp: u64 },
 }
