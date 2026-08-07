@@ -70,6 +70,8 @@ export default {
     loggingOut: "Logging out...",
     logout: "Logout",
     live: "Live",
+    layoutFullWidth: "Full width",
+    layoutConstrained: "Centered",
   },
 
   // ── Session / Login ──
@@ -866,10 +868,21 @@ export default {
     noContent: "No content retained",
     structured: "Structured",
     raw: "Raw",
+    chat: "Chat",
+    systemTab: "System",
+    toolsTab: "Tools",
+    toolsCount: "{{count}} tools",
     truncated: "Truncated",
     fullRetained: "Full",
+    loadMore: "Load more ({{count}})",
+    noMessages: "No messages to display",
+    thinking: "Thinking",
+    toolCallId: "Call ID",
+    toolResult: "Tool result",
+    toolResultError: "Tool error",
+    image: "Image",
     emptyTitle: "No content to display",
-    emptyDescription: "This segment has no saved payload — usually means the request hasn't been written or returned no body.",
+    emptyDescription: "This section has no saved payload — the request may not have returned a body or hasn't been written yet.",
   },
 
   // ── Usage Trend Chart ──

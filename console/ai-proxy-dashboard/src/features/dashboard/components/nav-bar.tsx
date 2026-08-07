@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Code2, Cpu, LogOut, Menu, Monitor, Moon, Settings, Sun, SunMoon } from "lucide-react"
+import { Code2, Cpu, LogOut, Maximize2, Menu, Minimize2, Monitor, Moon, Settings, Sun, SunMoon } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import { useTheme } from "@/components/theme-provider"
@@ -18,6 +18,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import { useLayoutWidth } from "@/hooks/use-layout-width"
 import { cn } from "@/lib/utils"
 
 type Page = "monitor" | "usage" | "providers" | "models" | "routes" | "keys" | "logs" | "settings" | "api" | "system"
@@ -48,6 +49,7 @@ export function NavBar({
 }) {
   const { t } = useTranslation()
   const { theme, setTheme } = useTheme()
+  const [fullWidth, toggleFullWidth] = useLayoutWidth()
   const [mobileOpen, setMobileOpen] = useState(false)
 
   // Primary horizontal nav — design order: 监控 用量 日志 渠道 模型 密钥 路由
@@ -203,6 +205,17 @@ export function NavBar({
           title={t("nav.settings")}
         >
           <Settings className="h-[15px] w-[15px]" />
+        </button>
+
+        {/* Layout width toggle */}
+        <button
+          type="button"
+          onClick={toggleFullWidth}
+          className={iconBtn}
+          title={fullWidth ? t("nav.layoutConstrained") : t("nav.layoutFullWidth")}
+          aria-label={fullWidth ? t("nav.layoutConstrained") : t("nav.layoutFullWidth")}
+        >
+          {fullWidth ? <Minimize2 className="h-[15px] w-[15px]" /> : <Maximize2 className="h-[15px] w-[15px]" />}
         </button>
 
         {/* Theme toggle */}

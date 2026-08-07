@@ -20,6 +20,7 @@ import {
   SessionErrorView,
 } from "@/features/dashboard/components/session-shell"
 import { useHashRoute } from "@/features/dashboard/hooks/use-hash-route"
+import { useLayoutWidth } from "@/hooks/use-layout-width"
 import type { ConsoleSession } from "@/features/dashboard/types"
 
 export function App() {
@@ -27,6 +28,7 @@ export function App() {
   const [sessionError, setSessionError] = useState("")
   const [logoutPending, setLogoutPending] = useState(false)
   const [route, navigate] = useHashRoute()
+  const [fullWidth] = useLayoutWidth()
 
   const loadSession = useCallback(async () => {
     try {
@@ -164,7 +166,7 @@ export function App() {
       />
       <main className={`flex-1 ${activePage === "logs" ? "overflow-hidden" : "overflow-y-auto"}`}>
         <div
-          className={`mx-auto flex ${activePage === "logs" ? "h-full" : "min-h-[calc(100vh-4.25rem)]"} max-w-[1540px] flex-col ${
+          className={`${fullWidth ? "" : "mx-auto max-w-[1540px]"} flex ${activePage === "logs" ? "h-full" : "min-h-[calc(100vh-4.25rem)]"} flex-col ${
             activePage === "monitor" ? "" : "px-5 py-5 lg:px-8 lg:py-7"
           }`}
         >
