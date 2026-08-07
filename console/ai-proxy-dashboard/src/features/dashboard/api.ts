@@ -22,11 +22,13 @@ import type {
   UpdateModelMetadataPayload,
   RustProxyStatus,
 } from "@/features/dashboard/types"
+import { toast } from "@/components/ui/toast"
 
 export const DEFAULT_REQUEST_LIMIT = 50
 export const DEFAULT_REQUEST_OFFSET = 0
 
-export async function requestJson(url: string, init?: RequestInit): Promise<any> {
+export async function requestJson(url: string, init?: RequestInit, timingLabel?: string): Promise<any> {
+  const startedAt = performance.now()
   const response = await fetch(url, {
     ...init,
     credentials: "same-origin",
@@ -35,25 +37,43 @@ export async function requestJson(url: string, init?: RequestInit): Promise<any>
       ...(init?.headers ?? {}),
     },
   })
+  const headersAt = performance.now()
 
   if (response.status === 401) {
     throw new Error("unauthorized")
   }
 
-  if (!response.ok) {
-    const contentType = response.headers.get("content-type") ?? ""
-    if (contentType.includes("application/json")) {
-      const payload = (await response.json().catch(() => ({}))) as {
-        error?: unknown
-      }
-      throw new Error(String(payload.error ?? "request failed"))
-    }
+  const text = await response.text()
+  const bodyAt = performance.now()
+  let payload: any
+  let parseError: unknown
+  try {
+    payload = JSON.parse(text)
+  } catch (error) {
+    payload = null
+    parseError = error
+  }
+  const parsedAt = performance.now()
 
-    const text = await response.text()
-    throw new Error(text || "request failed")
+  if (timingLabel) {
+    // Temporary mobile diagnostics; remove after remote latency investigation.
+    const waitMs = headersAt - startedAt
+    const downloadMs = bodyAt - headersAt
+    const parseMs = parsedAt - bodyAt
+    const totalMs = parsedAt - startedAt
+    const sizeKb = new Blob([text]).size / 1024
+    toast(
+      `${timingLabel}：等待 ${waitMs.toFixed(0)}ms · 下载 ${downloadMs.toFixed(0)}ms · 解析 ${parseMs.toFixed(0)}ms · 总计 ${totalMs.toFixed(0)}ms · ${sizeKb.toFixed(1)}KB`,
+      { duration: 5000 },
+    )
   }
 
-  return response.json()
+  if (!response.ok) {
+    throw new Error(String((payload?.error ?? text) || "request failed"))
+  }
+  if (parseError) throw parseError
+
+  return payload
 }
 
 export function fetchSession(): Promise<ConsoleSession> {
@@ -89,7 +109,7 @@ export function fetchRequests(
   if (sortBy) params.set('sort_by', sortBy);
   if (sortOrder) params.set('sort_order', sortOrder);
 
-  return requestJson(`/__console/api/requests?${params.toString()}`)
+  return requestJson(`/__console/api/requests?${params.toString()}`, undefined, "日志列表")
 }
 
 export function fetchUsageStats(query?: URLSearchParams): Promise<ConsoleUsageStatsPayload> {
@@ -252,7 +272,7 @@ export interface ConsoleFilterOptions {
 }
 
 export function fetchFilterOptions(): Promise<{ ok: boolean } & ConsoleFilterOptions> {
-  return requestJson("/__console/api/filters")
+  return requestJson("/__console/api/filters", undefined, "筛选选项")
 }
 
 export function fetchModels(): Promise<ConsoleModelsPayload> {
