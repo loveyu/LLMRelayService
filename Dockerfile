@@ -19,7 +19,7 @@ WORKDIR /app
 
 # curl provides stable HTTP/HTTPS/SOCKS proxy support under the Bun runtime.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 
 # Copy TS runtime
