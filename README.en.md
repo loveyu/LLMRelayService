@@ -7,9 +7,21 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun-black)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/language-TypeScript-blue)](https://www.typescriptlang.org)
+[![Rust](https://img.shields.io/badge/engine-Rust-orange)](https://www.rust-lang.org)
 [![Docker Image](https://img.shields.io/badge/ghcr.io-gojam11%2Fllmrelayservice-blue?logo=docker)](https://github.com/GoJam11/LLMRelayService/pkgs/container/llmrelayservice)
 
-LRS is a lightweight LLM relay service built on **Bun + Hono**. It unifies multiple AI providers behind a single entry point and, through its built-in web console, lets you observe the latency, token usage, and cache hits of every single request.
+LRS is an LLM relay service built on a **Bun + Hono + Rust** architecture. The core forwarding is handled by the **Rust** high-performance engine, while the management layer (config CRUD, database, web console) runs in **TypeScript**, with the two communicating via Unix Socket IPC.
+
+**Architecture**
+
+```
+Client ──► Rust Proxy (:3301) ──► Upstream LLM APIs   (forwarding, separate port)
+               ↕ IPC
+Client ──► TS  Server (:3000)  ──► Console UI / OpenAPI / DB   (management)
+```
+
+- **Rust proxy**: route matching, authentication, request forwarding, body transformation, timeout control, failover, streaming SSE — all stateless, async, non-blocking
+- **TS server**: manages the Rust child process lifecycle (spawn/restart/health checks), hot config sync (pushes updates on every change), logs to DB
 
 - **🪶 Lightweight pass-through** — No format conversion by default; whatever the client sends is forwarded as-is (only the auth header is swapped), avoiding dropped fields, broken streaming protocols, and other compatibility issues.
 - **🔍 Full request recording** — Stores each request's original body, the actual forwarded body, and the response in full, so you can open the logs and pinpoint issues directly.
@@ -104,7 +116,7 @@ bun run db:migrate
 bun run dev
 ```
 
-The service listens on port `3300` by default. Open `http://localhost:3300` to access the console and add your first channel on the Providers page.
+In local development, the Rust proxy listens on `3301` for client LLM requests, while the TS server listens on `3300` for the console. Open `http://localhost:3300` to access the console and add your first channel on the Providers page.
 
 ### Other commands
 
@@ -120,11 +132,11 @@ bun test             # Run tests
 
 ## Send your first request
 
-After adding a channel in the console, you can verify the gateway with `curl`. Choose the auth header by channel type (see [Routing rules](#routing-rules)):
+After adding a channel in the console, you can verify the gateway with `curl`. LLM requests go to the Rust proxy (default `3301` locally). Choose the auth header by channel type (see [Routing rules](#routing-rules)):
 
 ```bash
 # Anthropic-format channel
-curl http://localhost:3300/v1/messages \
+curl http://localhost:3301/v1/messages \
   -H "x-api-key: $GATEWAY_API_KEY" \
   -H "content-type: application/json" \
   -d '{
@@ -134,7 +146,7 @@ curl http://localhost:3300/v1/messages \
   }'
 
 # OpenAI-format channel
-curl http://localhost:3300/v1/chat/completions \
+curl http://localhost:3301/v1/chat/completions \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "content-type: application/json" \
   -d '{
@@ -162,7 +174,7 @@ cp .env.example .env
 GATEWAY_API_KEY=your-key docker compose up -d
 ```
 
-Open `http://localhost:3001` to access the console (`docker-compose.yml` maps the container's port 3000 to host port 3001 by default).
+Open `http://localhost:3001` to access the console (`docker-compose.yml` maps the container's TS port 3000 to host port 3001 by default). To allow external clients to connect directly to the Rust proxy, additionally expose port `3301` in `docker-compose.yml`.
 
 To update later:
 
@@ -182,12 +194,12 @@ GATEWAY_API_KEY=your-key docker compose -f docker-compose.sqlite.yml up -d
 
 ### Single-container Docker
 
-If you already have your own PostgreSQL, run a single container (it listens on `3300` by default):
+If you already have your own PostgreSQL, run a single container (TS listens on `3000`, Rust on `3301` inside the container):
 
 ```bash
 docker run -d \
   --name lrs \
-  -p 3300:3300 \
+  -p 3000:3000 \
   -e GATEWAY_API_KEY=your-key \
   -e DATABASE_URL=postgresql://user:password@host:5432/lrs \
   ghcr.io/gojam11/llmrelayservice:main
@@ -198,14 +210,14 @@ With SQLite (mount a volume so the database file persists):
 ```bash
 docker run -d \
   --name lrs \
-  -p 3300:3300 \
+  -p 3000:3000 \
   -e GATEWAY_API_KEY=your-key \
   -e DATABASE_URL=sqlite:///data/llm-relay.db \
   -v lrs_sqlite:/data \
   ghcr.io/gojam11/llmrelayservice:main
 ```
 
-Open `http://localhost:3300` to access the console.
+Open `http://localhost:3000` to access the console. For direct Rust proxy access from external clients, add `-p 3301:3301`.
 
 ### Build from source
 
@@ -243,8 +255,14 @@ Open the root path `/` to access the console. Features include:
 |----------|----------|-------------|
 | `DATABASE_URL` | ✅ | Database connection string. PostgreSQL: `postgresql://...`; SQLite: `sqlite:./data/llm-relay.db` (embedded, no separate database). Fixed at deploy time, not switchable at runtime |
 | `GATEWAY_API_KEY` | ✅ | The key clients use to access the gateway; also the console login password |
-| `PORT` | — | Listening port, default `3300` |
-| `UPSTREAM_DEFAULT_FIRST_BYTE_TIMEOUT_MS` | — | Default timeout for normal requests waiting on upstream response headers, default `300000` ms; can be overridden persistently in the console Settings page |
+| `PORT` | — | TS server listening port, default `3300` locally (`3000` in Docker) |
+| `SERVER_HOST` | — | TS server bind address, default `0.0.0.0` |
+| `RUST_PROXY_HOST` | — | Rust proxy bind address, default `127.0.0.1` (use `0.0.0.0` in Docker) |
+| `RUST_PROXY_PORT` | — | Rust proxy listening port, default `3301` |
+| `RUST_PROXY_BIN` | — | Rust binary path, auto-detected if unset |
+| `RUST_LOG` | — | Rust log level, default `rust_proxy=info` |
+| `LRS_IPC_SOCKET` | — | IPC socket path, default `/tmp/lrs-ipc.sock` |
+| `UPSTREAM_DEFAULT_FIRST_BYTE_TIMEOUT_MS` | — | Default timeout for normal requests waiting on upstream response headers, default `300000` ms; overridable in the console Settings page |
 | `UPSTREAM_STREAM_FIRST_BYTE_TIMEOUT_MS` | — | Default timeout for streaming requests waiting on upstream response headers, default `300000` ms; overridable in the console Settings page |
 | `UPSTREAM_IMAGE_FIRST_BYTE_TIMEOUT_MS` | — | Default timeout for image endpoints waiting on upstream response headers, default `300000` ms; overridable in the console Settings page |
 | `UPSTREAM_REQUEST_TIMEOUT_MS` | — | Legacy config name; used as a fallback when the split first-byte variables above are unset |
@@ -298,7 +316,7 @@ When editing a channel on the console Providers page, set `responsesMode` to `ch
 }
 ```
 
-Then point the Codex App's API Base URL at the LRS gateway address (e.g. `http://your-lrs-host:3300`) and use the gateway key as the API key.
+Then point the Codex App's API Base URL at the LRS Rust proxy address (e.g. `http://your-lrs-host:3301`) and use the gateway key as the API key.
 
 ---
 
@@ -313,10 +331,22 @@ Set `systemPrompt` in the provider config, and the gateway will merge it into th
 ```
 src/
   index.ts              # Hono entry: CORS, request dispatch, forwarding logic
+  server.ts             # Bun server entry, manages Rust child process lifecycle
   config.ts             # Route resolution (resolveRoute / resolveRouteByModel)
   console-ui.ts         # Console static asset hosting and /__console/* API
+  rust-process.ts       # Rust proxy process manager (spawn/restart/health check)
+  rust-bridge.ts        # TS ↔ Rust IPC communication client
   providers/            # Anthropic / OpenAI adapters
   db/                   # Drizzle ORM + PostgreSQL
+rust-proxy/
+  src/main.rs           # Rust Axum server entry
+  src/proxy.rs          # HTTP proxy (routing/auth/failover/body transform)
+  src/routing.rs        # Route matching (explicit/model/alias)
+  src/config.rs         # Config types (aligned with TS)
+  src/ipc.rs            # Unix Socket IPC bidirectional
+  src/auth.rs           # API key auth (SHA-256)
+  src/failover.rs       # Failover strategy
+  src/transform.rs      # Body transform + ModelRewriter
 console/
   ai-proxy-dashboard/   # Vite + React console frontend
 drizzle/                # Database migration files

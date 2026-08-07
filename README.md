@@ -116,7 +116,7 @@ bun run db:migrate
 bun run dev
 ```
 
-服务默认监听 `3300` 端口。访问 `http://localhost:3300` 打开控制台，在 Providers 页面添加第一个渠道。
+本地开发时，Rust 代理监听 `3301` 接收客户端 LLM 请求，TS 服务器监听 `3300` 提供控制台。访问 `http://localhost:3300` 打开控制台，在 Providers 页面添加第一个渠道。
 
 ### 其他命令
 
@@ -132,11 +132,11 @@ bun test             # 运行测试
 
 ## 发送第一个请求
 
-在控制台添加好一个渠道后，可以用 `curl` 验证网关是否打通。认证头根据渠道类型选择（详见[路由规则](#路由规则)）：
+在控制台添加好一个渠道后，可以用 `curl` 验证网关是否打通。LLM 请求发送到 Rust 代理（本地默认 `3301`），认证头根据渠道类型选择（详见[路由规则](#路由规则)）：
 
 ```bash
 # Anthropic 格式渠道
-curl http://localhost:3300/v1/messages \
+curl http://localhost:3301/v1/messages \
   -H "x-api-key: $GATEWAY_API_KEY" \
   -H "content-type: application/json" \
   -d '{
@@ -146,7 +146,7 @@ curl http://localhost:3300/v1/messages \
   }'
 
 # OpenAI 格式渠道
-curl http://localhost:3300/v1/chat/completions \
+curl http://localhost:3301/v1/chat/completions \
   -H "Authorization: Bearer $GATEWAY_API_KEY" \
   -H "content-type: application/json" \
   -d '{
@@ -174,7 +174,7 @@ cp .env.example .env
 GATEWAY_API_KEY=your-key docker compose up -d
 ```
 
-访问 `http://localhost:3001` 打开控制台（`docker-compose.yml` 默认将容器内 3000 端口映射到宿主机 3001）。
+访问 `http://localhost:3001` 打开控制台（`docker-compose.yml` 默认将容器内 TS 3000 端口映射到宿主机 3001）。如需外部客户端直连 Rust 代理，需在 `docker-compose.yml` 中额外暴露 `3301` 端口。
 
 后续更新：
 
@@ -194,12 +194,12 @@ GATEWAY_API_KEY=your-key docker compose -f docker-compose.sqlite.yml up -d
 
 ### 单容器 Docker
 
-如果你已经有自己的 PostgreSQL，可以直接运行单个容器（容器默认监听 `3300`）：
+如果你已经有自己的 PostgreSQL，可以直接运行单个容器（容器内 TS 监听 `3000`，Rust 监听 `3301`）：
 
 ```bash
 docker run -d \
   --name lrs \
-  -p 3300:3300 \
+  -p 3000:3000 \
   -e GATEWAY_API_KEY=your-key \
   -e DATABASE_URL=postgresql://user:password@host:5432/lrs \
   ghcr.io/gojam11/llmrelayservice:main
@@ -210,14 +210,14 @@ docker run -d \
 ```bash
 docker run -d \
   --name lrs \
-  -p 3300:3300 \
+  -p 3000:3000 \
   -e GATEWAY_API_KEY=your-key \
   -e DATABASE_URL=sqlite:///data/llm-relay.db \
   -v lrs_sqlite:/data \
   ghcr.io/gojam11/llmrelayservice:main
 ```
 
-访问 `http://localhost:3300` 打开控制台。
+访问 `http://localhost:3000` 打开控制台。如需外部客户端直连 Rust 代理，需额外映射 `-p 3301:3301`。
 
 ### 从源码构建
 
@@ -255,7 +255,7 @@ Railway / Render 等平台部署时构建命令同上。
 |------|------|------|
 | `DATABASE_URL` | ✅ | 数据库连接字符串。PostgreSQL：`postgresql://...`；SQLite：`sqlite:./data/llm-relay.db`（内嵌，无需额外数据库）。部署时确定，运行时不可切换 |
 | `GATEWAY_API_KEY` | ✅ | 客户端访问网关所需的 key，同时用作控制台登录密码 |
-| `PORT` | — | 监听端口，默认 `3300` |
+| `PORT` | — | TS 服务器监听端口，本地默认 `3300`（Docker 默认 `3000`） |
 | `SERVER_HOST` | — | 监听地址，默认 `0.0.0.0` |
 | `RUST_PROXY_HOST` | — | Rust 代理绑定地址，默认 `127.0.0.1`（Docker 用 `0.0.0.0`） |
 | `RUST_PROXY_PORT` | — | Rust 代理监听端口，默认 `3301` |
@@ -316,7 +316,7 @@ Codex CLI / Codex App 等客户端使用 OpenAI Responses API（`POST /v1/respon
 }
 ```
 
-配置完成后，将 Codex App 的 API Base URL 指向 LRS 网关地址（如 `http://your-lrs-host:3300`），API Key 填写网关 Key 即可。
+配置完成后，将 Codex App 的 API Base URL 指向 LRS Rust 代理地址（如 `http://your-lrs-host:3301`），API Key 填写网关 Key 即可。
 
 ---
 
