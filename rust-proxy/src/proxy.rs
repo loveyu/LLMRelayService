@@ -846,53 +846,33 @@ where
             return Poll::Ready(None);
         }
 
-        let this = self.as_mut().get_mut();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            || -> Poll<Option<Result<Bytes, axum::Error>>> {
-                loop {
-                    match Pin::new(&mut this.inner).poll_next(cx) {
-                        Poll::Ready(Some(Ok(chunk))) => {
-                            let text = String::from_utf8_lossy(&chunk);
-                            this.buffer.push_str(&text);
-                            if this.buffer.len() > this.safe_tail {
-                                let flush_end_raw = this.buffer.len() - this.safe_tail;
-                                let flush_end = this.buffer.floor_char_boundary(flush_end_raw);
-                                let flush_part = this.buffer[..flush_end].to_string();
-                                this.buffer = this.buffer[flush_end..].to_string();
-                                return Poll::Ready(Some(Ok(Bytes::from(
-                                    this.rewriter.rewrite_chunk(&flush_part),
-                                ))));
-                            }
-                        }
-                        Poll::Ready(Some(Err(e))) => {
-                            return Poll::Ready(Some(Err(axum::Error::new(e))));
-                        }
-                        Poll::Ready(None) => {
-                            this.drained = true;
-                            if !this.buffer.is_empty() {
-                                let rewritten = this.rewriter.rewrite_chunk(&this.buffer);
-                                return Poll::Ready(Some(Ok(Bytes::from(rewritten))));
-                            }
-                            return Poll::Ready(None);
-                        }
-                        Poll::Pending => return Poll::Pending,
+        loop {
+            match Pin::new(&mut self.inner).poll_next(cx) {
+                Poll::Ready(Some(Ok(chunk))) => {
+                    let text = String::from_utf8_lossy(&chunk);
+                    self.buffer.push_str(&text);
+                    if self.buffer.len() > self.safe_tail {
+                        let flush_end_raw = self.buffer.len() - self.safe_tail;
+                        let flush_end = self.buffer.floor_char_boundary(flush_end_raw);
+                        let flush_part = self.buffer[..flush_end].to_string();
+                        self.buffer = self.buffer[flush_end..].to_string();
+                        return Poll::Ready(Some(Ok(Bytes::from(
+                            self.rewriter.rewrite_chunk(&flush_part),
+                        ))));
                     }
                 }
-            },
-        ));
-
-        match result {
-            Ok(poll) => poll,
-            Err(e) => {
-                let msg = if let Some(s) = e.downcast_ref::<String>() {
-                    format!("Internal stream error: {s}")
-                } else if let Some(s) = e.downcast_ref::<&str>() {
-                    format!("Internal stream error: {s}")
-                } else {
-                    "Internal stream error".to_string()
-                };
-                this.drained = true;
-                Poll::Ready(Some(Err(axum::Error::new(msg))))
+                Poll::Ready(Some(Err(e))) => {
+                    return Poll::Ready(Some(Err(axum::Error::new(e))));
+                }
+                Poll::Ready(None) => {
+                    self.drained = true;
+                    if !self.buffer.is_empty() {
+                        let rewritten = self.rewriter.rewrite_chunk(&self.buffer);
+                        return Poll::Ready(Some(Ok(Bytes::from(rewritten))));
+                    }
+                    return Poll::Ready(None);
+                }
+                Poll::Pending => return Poll::Pending,
             }
         }
     }
