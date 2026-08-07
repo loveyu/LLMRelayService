@@ -17,6 +17,11 @@ FROM oven/bun:1 AS runner
 
 WORKDIR /app
 
+# curl provides stable HTTP/HTTPS/SOCKS proxy support under the Bun runtime.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl \
+  && rm -rf /var/lib/apt/lists/*
+
 # Copy TS runtime
 COPY --from=builder /app/package.json /app/bun.lock /app/bunfig.toml ./
 COPY --from=builder /app/node_modules ./node_modules
