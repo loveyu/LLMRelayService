@@ -80,6 +80,12 @@ pub enum RustToTsMessage {
         output_tokens: Option<u32>,
         #[serde(rename = "totalTokens")]
         total_tokens: Option<u32>,
+        #[serde(rename = "cacheCreationInputTokens")]
+        cache_creation_input_tokens: Option<u32>,
+        #[serde(rename = "cacheReadInputTokens")]
+        cache_read_input_tokens: Option<u32>,
+        #[serde(rename = "cachedInputTokens")]
+        cached_input_tokens: Option<u32>,
     },
     RequestConfigSync,
     Pong {

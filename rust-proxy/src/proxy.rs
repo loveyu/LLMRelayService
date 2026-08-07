@@ -242,6 +242,7 @@ pub async fn proxy_handler(
             &headers,
             &fwd_headers,
             &request_body,
+            &body,
             auth_result.api_key_id.clone(),
             auth_result.api_key_name.clone(),
         );
@@ -290,6 +291,7 @@ pub async fn proxy_handler(
                             .as_millis() as u64;
                         let (input_tokens, output_tokens, total_tokens) =
                             extract_token_counts(&usage);
+                        let cache = extract_cache_tokens(&usage);
                         tokio::spawn(async move {
                             ipc.send(RustToTsMessage::ResponseLog {
                                 request_id: rid.clone(),
@@ -306,6 +308,9 @@ pub async fn proxy_handler(
                                 input_tokens,
                                 output_tokens,
                                 total_tokens,
+                                cache_creation_input_tokens: cache.cache_creation,
+                                cache_read_input_tokens: cache.cache_read,
+                                cached_input_tokens: cache.cached,
                             });
                         });
                     }
@@ -665,6 +670,32 @@ fn extract_usage(body: &str) -> Option<serde_json::Value> {
     serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| v.get("usage").cloned())
 }
 
+struct CacheTokens {
+    cache_creation: Option<u32>,
+    cache_read: Option<u32>,
+    cached: Option<u32>,
+}
+
+fn extract_cache_tokens(usage: &Option<serde_json::Value>) -> CacheTokens {
+    match usage {
+        Some(u) => CacheTokens {
+            cache_creation: u
+                .get("cache_creation_input_tokens")
+                .or(u.get("cacheCreationInputTokens"))
+                .and_then(|v| v.as_u64().map(|n| n as u32)),
+            cache_read: u
+                .get("cache_read_input_tokens")
+                .or(u.get("cacheReadInputTokens"))
+                .and_then(|v| v.as_u64().map(|n| n as u32)),
+            cached: u
+                .get("cached_tokens")
+                .or(u.get("cachedTokens"))
+                .and_then(|v| v.as_u64().map(|n| n as u32)),
+        },
+        None => CacheTokens { cache_creation: None, cache_read: None, cached: None },
+    }
+}
+
 fn extract_token_counts(
     usage: &Option<serde_json::Value>,
 ) -> (Option<u32>, Option<u32>, Option<u32>) {
@@ -831,7 +862,8 @@ fn send_request_log(
     model: &str,
     headers: &HeaderMap,
     fwd_headers: &reqwest::header::HeaderMap,
-    request_body: &[u8],
+    forwarded_body: &[u8],
+    original_body: &[u8],
     api_key_id: Option<String>,
     api_key_name: Option<String>,
 ) {
@@ -858,10 +890,15 @@ fn send_request_log(
             .collect::<std::collections::HashMap<_, _>>(),
     )
     .unwrap_or_default();
-    let fp = if request_body.is_empty() {
+    let fp = if forwarded_body.is_empty() {
         None
     } else {
-        Some(String::from_utf8_lossy(request_body).to_string())
+        Some(String::from_utf8_lossy(forwarded_body).to_string())
+    };
+    let op = if original_body.is_empty() {
+        None
+    } else {
+        Some(String::from_utf8_lossy(original_body).to_string())
     };
 
     tokio::spawn(async move {
@@ -875,7 +912,7 @@ fn send_request_log(
             url: fu,
             target_url: tu,
             request_model: rm,
-            original_payload: None,
+            original_payload: op,
             forwarded_payload: fp,
             original_headers: oh,
             forward_headers: fh,
