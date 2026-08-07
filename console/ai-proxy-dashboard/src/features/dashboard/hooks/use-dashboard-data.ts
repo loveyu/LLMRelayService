@@ -20,6 +20,7 @@ export interface RequestFilters {
   search?: string;
   status?: string;
   cache?: string;
+  range?: string;
 }
 
 export function useDashboardData(onUnauthorized: () => void, initialLimit = DEFAULT_REQUEST_LIMIT) {
@@ -37,6 +38,7 @@ export function useDashboardData(onUnauthorized: () => void, initialLimit = DEFA
     clients: [],
   })
   const loadIdRef = useRef(0)
+  const initialFilterOptionsRequestedRef = useRef(false)
 
   // Refs 保存最新的可变值，供稳定回调读取，避免闭包捕获旧值
   const limitRef = useRef(initialLimit)
@@ -72,6 +74,8 @@ export function useDashboardData(onUnauthorized: () => void, initialLimit = DEFA
 
   // 初始加载筛选选项
   useEffect(() => {
+    if (initialFilterOptionsRequestedRef.current) return
+    initialFilterOptionsRequestedRef.current = true
     void loadFilterOptions()
   }, [loadFilterOptions])
 

@@ -56,7 +56,7 @@ export function LogsPage({
   const [sourceTypeFilter, setSourceTypeFilter] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
   const [cacheFilter, setCacheFilter] = useState("")
-  const [timeRange, setTimeRange] = useState<LogsTimeRange>("1h")
+  const [timeRange, setTimeRange] = useState<LogsTimeRange>("24h")
   const [liveMode, setLiveMode] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ConsoleRequestDetail | null>(null)
@@ -110,9 +110,14 @@ export function LogsPage({
     api_key_name: sourceTypeFilter || undefined,
     status: statusFilter || undefined,
     cache: cacheFilter || undefined,
-  }), [debouncedSearchQuery, routeFilter, modelFilter, sourceTypeFilter, statusFilter, cacheFilter])
+    range: timeRange === "all" ? undefined : timeRange,
+  }), [debouncedSearchQuery, routeFilter, modelFilter, sourceTypeFilter, statusFilter, cacheFilter, timeRange])
 
+  const lastAutoRequestKeyRef = useRef("")
   useEffect(() => {
+    const requestKey = JSON.stringify(filters)
+    if (lastAutoRequestKeyRef.current === requestKey) return
+    lastAutoRequestKeyRef.current = requestKey
     void refreshDashboard({ filters, offset: 0 })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters])

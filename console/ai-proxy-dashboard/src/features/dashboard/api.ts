@@ -93,6 +93,7 @@ export function fetchRequests(
     search?: string;
     status?: string;
     cache?: string;
+    range?: string;
   },
   sortBy?: RequestSortKey,
   sortOrder?: SortDirection,
@@ -106,6 +107,7 @@ export function fetchRequests(
   if (filters?.search) params.set('search', filters.search);
   if (filters?.status) params.set('status', filters.status);
   if (filters?.cache) params.set('cache', filters.cache);
+  if (filters?.range) params.set('range', filters.range);
   if (sortBy) params.set('sort_by', sortBy);
   if (sortOrder) params.set('sort_order', sortOrder);
 
