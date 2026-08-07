@@ -16,6 +16,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
   quality:
@@ -26,15 +27,32 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Install frontend deps
+        run: cd console/ai-proxy-dashboard && bun install --frozen-lockfile
 
       - name: Frontend typecheck
-        run: cd console/ai-proxy-dashboard && bun install && bun run typecheck
+        run: cd console/ai-proxy-dashboard && bun run typecheck
 
       - name: Frontend build
         run: cd console/ai-proxy-dashboard && bun run build
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            rust-proxy/target/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust-proxy/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Rust format check
         run: cd rust-proxy && cargo fmt -- --check
