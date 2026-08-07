@@ -82,6 +82,10 @@ impl PassthroughObserver {
         let body = String::from_utf8_lossy(&self.buffer);
         parse_anthropic_sse_usage(&body)
     }
+
+    pub fn body_text(&self) -> String {
+        String::from_utf8_lossy(&self.buffer).to_string()
+    }
 }
 
 #[derive(Clone)]

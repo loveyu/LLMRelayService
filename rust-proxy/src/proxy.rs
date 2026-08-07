@@ -289,6 +289,7 @@ pub async fn proxy_handler(
                     let body_bytes = result.body_bytes;
                     let body_content = result.body_content.clone();
                     let resp_model = route.resolved_model.clone();
+                    let resp_hdrs = rh.clone();
                     let ttfb_ms = t_ttfb.as_millis() as u64;
                     let first_chunk = created_at.checked_add(ttfb_ms);
                     let stop_reason = body_content.as_deref().and_then(extract_stop_reason);
@@ -330,12 +331,14 @@ pub async fn proxy_handler(
                     if let Some(handle) = result.sse_observer {
                         let ipc = state.ipc.clone();
                         let rid = request_id.clone();
+                        let hdrs = resp_hdrs.clone();
                         tokio::spawn(async move {
                             handle.notify.notified().await;
                             if let Ok(mut guard) = handle.observer.try_lock()
                                 && let Some(obs) = guard.take()
                             {
                                 let usage = obs.parse_usage();
+                                let body_text = obs.body_text();
                                 let now = SystemTime::now()
                                     .duration_since(UNIX_EPOCH)
                                     .unwrap_or_default()
@@ -344,7 +347,7 @@ pub async fn proxy_handler(
                                     request_id: rid,
                                     response_status: 200,
                                     response_status_text: "OK".to_string(),
-                                    response_headers: serde_json::Value::Null,
+                                    response_headers: hdrs,
                                     response_body_bytes: obs.total_bytes,
                                     first_chunk_at: obs.first_chunk_at_ms,
                                     first_token_at: obs.first_token_at_ms,
@@ -358,7 +361,7 @@ pub async fn proxy_handler(
                                     cache_creation_input_tokens: usage.cache_creation_input_tokens,
                                     cache_read_input_tokens: usage.cache_read_input_tokens,
                                     cached_input_tokens: usage.cached_input_tokens,
-                                    response_payload: None,
+                                    response_payload: Some(body_text),
                                 });
                             }
                         });
