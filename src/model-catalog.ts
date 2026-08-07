@@ -1,7 +1,10 @@
 import { loadCatalogFromDb, saveCatalogToDb, type ModelPricing } from './catalog-db';
+import { fetchExternalJson, getExternalResourceProxyUrl, redactProxyUrl } from './external-resource';
 
 const MODELS_DEV_URL = 'https://models.dev/api.json';
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const MODEL_CATALOG_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const EXTERNAL_FETCH_TIMEOUT_MS = 30_000;
+const EXTERNAL_FETCH_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
 
 let contextCache: Map<string, number> | null = null;
 let cacheLoadedAt = 0;
@@ -10,6 +13,7 @@ let networkFetchedAt = 0;
 
 // A shared in-flight promise so model-catalog and pricing share one fetch
 let sharedFetchPromise: Promise<{ contextMap: Map<string, number>; pricingMap: Map<string, ModelPricing> } | null> | null = null;
+let nextExternalFetchAt = 0;
 
 /**
  * models.dev 用同一个裸模型 ID（如 `claude-opus-4-6`）同时挂在 170+ 个 provider 下，
@@ -180,14 +184,22 @@ export function buildCatalogMapsFromModelsDev(data: unknown): {
 
 export async function fetchModelsDevData(): Promise<{ contextMap: Map<string, number>; pricingMap: Map<string, ModelPricing> } | null> {
   if (sharedFetchPromise) return sharedFetchPromise;
+  if (Date.now() < nextExternalFetchAt) return null;
 
   sharedFetchPromise = (async () => {
+    let proxyUrl: string | null = null;
     try {
-      const response = await fetch(MODELS_DEV_URL, { signal: AbortSignal.timeout(10_000) });
-      if (!response.ok) throw new Error(`models.dev responded with ${response.status}`);
-      const data = await response.json() as unknown;
+      proxyUrl = getExternalResourceProxyUrl();
+      const startedAt = performance.now();
+      const data = await fetchExternalJson(MODELS_DEV_URL, EXTERNAL_FETCH_TIMEOUT_MS);
+      nextExternalFetchAt = 0;
+      console.log(`[catalog] Fetched models.dev in ${Math.round(performance.now() - startedAt)}ms${proxyUrl ? ` via ${redactProxyUrl(proxyUrl)}` : ''}`);
       return buildCatalogMapsFromModelsDev(data);
-    } catch {
+    } catch (error) {
+      nextExternalFetchAt = Date.now() + EXTERNAL_FETCH_FAILURE_COOLDOWN_MS;
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const safeMessage = proxyUrl ? rawMessage.replaceAll(proxyUrl, redactProxyUrl(proxyUrl)) : rawMessage;
+      console.warn(`[catalog] models.dev refresh failed; retry suppressed for ${EXTERNAL_FETCH_FAILURE_COOLDOWN_MS / 60_000}m:`, safeMessage);
       return null;
     } finally {
       sharedFetchPromise = null;
@@ -221,14 +233,19 @@ export async function warmModelCatalogFromDb(): Promise<boolean> {
     contextCache = contextMap;
     cacheLoadedAt = fetchedAt;
   }
-  return contextMap.size > 0 && Date.now() - fetchedAt < CACHE_TTL_MS;
+  return contextMap.size > 0 && Date.now() - fetchedAt < MODEL_CATALOG_CACHE_TTL_MS;
+}
+
+export function primeModelCatalogCache(contextMap: Map<string, number>, fetchedAt: number): void {
+  contextCache = contextMap;
+  cacheLoadedAt = fetchedAt;
 }
 
 export async function ensureModelCatalogLoaded(): Promise<void> {
-  if (contextCache !== null && Date.now() - cacheLoadedAt < CACHE_TTL_MS) {
+  if (contextCache !== null && Date.now() - cacheLoadedAt < MODEL_CATALOG_CACHE_TTL_MS) {
     return;
   }
-  await refreshFromNetwork();
+  void refreshFromNetwork();
 }
 
 /**

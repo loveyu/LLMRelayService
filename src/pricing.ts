@@ -1,5 +1,5 @@
 import { loadCatalogFromDb, saveCatalogToDb, type ModelPricing } from './catalog-db';
-import { fetchModelsDevData } from './model-catalog';
+import { fetchModelsDevData, MODEL_CATALOG_CACHE_TTL_MS } from './model-catalog';
 
 export type { ModelPricing } from './catalog-db';
 
@@ -74,35 +74,45 @@ export function resolveEffectiveCachePricing(
 
 let pricingCache: Map<string, ModelPricing> | null = null;
 let cacheTimestamp = 0;
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-
 async function fetchModelsDevPricing(): Promise<Map<string, ModelPricing>> {
   const now = Date.now();
-  if (pricingCache && now - cacheTimestamp < CACHE_TTL) {
+  if (pricingCache && now - cacheTimestamp < MODEL_CATALOG_CACHE_TTL_MS) {
     return pricingCache;
   }
 
-  // Try loading from DB first
   if (!pricingCache) {
     const { pricingMap, fetchedAt } = await loadCatalogFromDb();
-    if (pricingMap.size > 0 && now - fetchedAt < CACHE_TTL) {
+    if (pricingMap.size > 0) {
       pricingCache = pricingMap;
       cacheTimestamp = fetchedAt;
-      return pricingCache;
     }
   }
 
-  // Fetch from network (shared with model-catalog to avoid double request)
-  const result = await fetchModelsDevData();
-  if (result) {
-    pricingCache = result.pricingMap;
-    cacheTimestamp = now;
-    // DB persistence is handled by model-catalog side
-    saveCatalogToDb(result.contextMap, result.pricingMap, now).catch(() => {});
-    console.log(`[pricing] Loaded ${result.pricingMap.size} model prices from Models.dev`);
+  if (!pricingCache || now - cacheTimestamp >= MODEL_CATALOG_CACHE_TTL_MS) {
+    void refreshPricingFromNetwork();
   }
 
   return pricingCache || new Map();
+}
+
+async function refreshPricingFromNetwork(): Promise<void> {
+  const result = await fetchModelsDevData();
+  if (!result) return;
+  const now = Date.now();
+  primePricingCache(result.pricingMap, now);
+  saveCatalogToDb(result.contextMap, result.pricingMap, now).catch(() => {});
+  console.log(`[pricing] Loaded ${result.pricingMap.size} model prices from models.dev`);
+}
+
+export function primePricingCache(cache: Map<string, ModelPricing>, fetchedAt: number): void {
+  pricingCache = cache;
+  cacheTimestamp = fetchedAt;
+}
+
+export async function warmPricingCacheFromDb(): Promise<boolean> {
+  const { pricingMap, fetchedAt } = await loadCatalogFromDb();
+  if (pricingMap.size > 0) primePricingCache(pricingMap, fetchedAt);
+  return pricingMap.size > 0 && Date.now() - fetchedAt < MODEL_CATALOG_CACHE_TTL_MS;
 }
 
 export function getModelPricing(modelId: string): ModelPricing | null {
@@ -264,5 +274,3 @@ export function calculateCost(
 ): CostBreakdown {
   return calculateCostWithPricing(usage, getModelPricing(modelId), upstreamType);
 }
-
-

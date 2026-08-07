@@ -257,6 +257,7 @@ Railway / Render 等平台部署时构建命令同上。
 | `GATEWAY_API_KEY` | ✅ | 客户端访问网关所需的 key，同时用作控制台登录密码 |
 | `PORT` | — | TS 服务器监听端口，本地默认 `3300`（Docker 默认 `3000`） |
 | `SERVER_HOST` | — | 监听地址，默认 `0.0.0.0` |
+| `EXTERNAL_RESOURCE_PROXY` | — | 仅用于 models.dev 等外部元数据请求的代理；支持 `http://`、`https://`、`socks5://`、`socks5h://`，可在 URL 中携带用户名密码，不影响模型上游转发 |
 | `RUST_PROXY_HOST` | — | Rust 代理绑定地址，默认 `127.0.0.1`（Docker 用 `0.0.0.0`） |
 | `RUST_PROXY_PORT` | — | Rust 代理监听端口，默认 `3301` |
 | `RUST_PROXY_BIN` | — | Rust 二进制路径，默认自动检测 |

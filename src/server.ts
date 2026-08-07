@@ -5,9 +5,9 @@
 import app from './index';
 import { startPerfMonitor } from './perf-monitor';
 import { runAutoModelSync } from './config';
-import { warmModelCatalogFromDb } from './model-catalog';
-import { fetchModelsDevData } from './model-catalog';
+import { fetchModelsDevData, MODEL_CATALOG_CACHE_TTL_MS, primeModelCatalogCache, warmModelCatalogFromDb } from './model-catalog';
 import { saveCatalogToDb } from './catalog-db';
+import { primePricingCache, warmPricingCacheFromDb } from './pricing';
 import { initializeTokenEstimator } from './token-estimator';
 import { runMigrations, type MigrationStatus } from './db/migrate';
 import { getDatabaseUrl, getDbDriver, getSqliteFilePath } from './db/config';
@@ -38,13 +38,27 @@ try {
 
 // 2. 从 DB 预热 catalog 缓存（带保护，数据库不可用时优雅降级）
 let dbCatalogFresh = false;
+let dbPricingFresh = false;
 if (migrationStatus.state === 'success' || migrationStatus.state === 'skipped') {
   try {
-    dbCatalogFresh = await warmModelCatalogFromDb();
+    [dbCatalogFresh, dbPricingFresh] = await Promise.all([
+      warmModelCatalogFromDb(),
+      warmPricingCacheFromDb(),
+    ]);
   } catch (error) {
     console.warn('[catalog] Failed to warm from DB:', error);
     dbCatalogFresh = false;
   }
+}
+
+async function refreshExternalCatalog(): Promise<void> {
+  const result = await fetchModelsDevData();
+  if (!result) return;
+  const now = Date.now();
+  primeModelCatalogCache(result.contextMap, now);
+  primePricingCache(result.pricingMap, now);
+  await saveCatalogToDb(result.contextMap, result.pricingMap, now);
+  console.log(`[catalog] Background refresh: ${result.contextMap.size} context + ${result.pricingMap.size} pricing entries saved`);
 }
 
 function escapeHtml(str: string): string {
@@ -311,12 +325,15 @@ if (migrationStatus.state === 'success' || migrationStatus.state === 'skipped') 
 }
 
 // 并行从 models.dev 刷新 catalog（不阻塞启动，DB 缓存过期时才需要）
-if (!dbCatalogFresh) {
-  fetchModelsDevData().then((result) => {
-    if (result) {
-      const now = Date.now();
-      saveCatalogToDb(result.contextMap, result.pricingMap, now).catch(() => {});
-      console.log(`[catalog] Background refresh: ${result.contextMap.size} context + ${result.pricingMap.size} pricing entries saved`);
-    }
-  }).catch(() => {});
+if (!dbCatalogFresh || !dbPricingFresh) {
+  refreshExternalCatalog().catch((error) => {
+    console.warn('[catalog] Background refresh failed:', error instanceof Error ? error.message : error);
+  });
 }
+
+const catalogRefreshTimer = setInterval(() => {
+  refreshExternalCatalog().catch((error) => {
+    console.warn('[catalog] Scheduled refresh failed:', error instanceof Error ? error.message : error);
+  });
+}, MODEL_CATALOG_CACHE_TTL_MS);
+catalogRefreshTimer.unref();
