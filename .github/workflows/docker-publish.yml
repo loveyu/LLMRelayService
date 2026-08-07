@@ -82,7 +82,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: rust-proxy
-          path: rust-proxy/target/release/
+          path: .
+
+      - run: chmod +x rust-proxy/target/release/rust-proxy
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
