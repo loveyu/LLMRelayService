@@ -4,6 +4,7 @@ use crate::failover::{self, FailoverTrigger};
 use crate::ipc::RustToTsMessage;
 use crate::responses::{self, ChatSseToResponsesSse};
 use crate::routing::{self, RouteResult};
+use crate::sse_observer::{ObservingSseStream, SseObserverHandle};
 use crate::transform::{self, ModelRewriter};
 use axum::{
     body::Body,
@@ -258,9 +259,15 @@ pub async fn proxy_handler(
                         .is_some_and(|ct| ct.contains("text/event-stream"));
                     let resp_hdrs = upstream_resp.headers().clone();
 
-                    let result =
-                        build_response(upstream_resp, &route, converting_responses, &model, 0)
-                            .await;
+                    let result = build_response(
+                        upstream_resp,
+                        &route,
+                        converting_responses,
+                        &model,
+                        0,
+                        created_at,
+                    )
+                    .await;
                     let t_total = t_total.elapsed();
 
                     let rh = serde_json::to_value(
@@ -281,6 +288,7 @@ pub async fn proxy_handler(
                     let usage = result.usage.clone();
                     let body_bytes = result.body_bytes;
                     let body_content = result.body_content.clone();
+                    let resp_model = route.resolved_model.clone();
                     let ttfb_ms = t_ttfb.as_millis() as u64;
                     let first_chunk = created_at.checked_add(ttfb_ms);
                     let stop_reason = body_content.as_deref().and_then(extract_stop_reason);
@@ -294,6 +302,7 @@ pub async fn proxy_handler(
                         let (input_tokens, output_tokens, total_tokens) =
                             extract_token_counts(&usage);
                         let cache = extract_cache_tokens(&usage);
+                        let rm = resp_model.clone();
                         tokio::spawn(async move {
                             ipc.send(RustToTsMessage::ResponseLog {
                                 request_id: rid.clone(),
@@ -305,7 +314,7 @@ pub async fn proxy_handler(
                                 first_token_at: first_chunk,
                                 completed_at: Some(now),
                                 has_streaming_content: is_sse_val,
-                                response_model: route.resolved_model.clone(),
+                                response_model: rm,
                                 stop_reason,
                                 input_tokens,
                                 output_tokens,
@@ -315,6 +324,43 @@ pub async fn proxy_handler(
                                 cached_input_tokens: cache.cached,
                                 response_payload: body_content,
                             });
+                        });
+                    }
+                    // SSE stream observer: wait for stream to complete, then send supplemental log with usage data
+                    if let Some(handle) = result.sse_observer {
+                        let ipc = state.ipc.clone();
+                        let rid = request_id.clone();
+                        tokio::spawn(async move {
+                            handle.notify.notified().await;
+                            if let Ok(mut guard) = handle.observer.try_lock()
+                                && let Some(obs) = guard.take()
+                            {
+                                let usage = obs.parse_usage();
+                                let now = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis() as u64;
+                                ipc.send(RustToTsMessage::ResponseLog {
+                                    request_id: rid,
+                                    response_status: 200,
+                                    response_status_text: "OK".to_string(),
+                                    response_headers: serde_json::Value::Null,
+                                    response_body_bytes: obs.total_bytes,
+                                    first_chunk_at: obs.first_chunk_at_ms,
+                                    first_token_at: obs.first_token_at_ms,
+                                    completed_at: Some(now),
+                                    has_streaming_content: true,
+                                    response_model: resp_model,
+                                    stop_reason: usage.stop_reason,
+                                    input_tokens: usage.input_tokens,
+                                    output_tokens: usage.output_tokens,
+                                    total_tokens: usage.total_tokens,
+                                    cache_creation_input_tokens: usage.cache_creation_input_tokens,
+                                    cache_read_input_tokens: usage.cache_read_input_tokens,
+                                    cached_input_tokens: usage.cached_input_tokens,
+                                    response_payload: None,
+                                });
+                            }
                         });
                     }
                     info!(
@@ -359,7 +405,7 @@ pub async fn proxy_handler(
                     }
                 }
 
-                return build_response(upstream_resp, &route, false, "", 0)
+                return build_response(upstream_resp, &route, false, "", 0, created_at)
                     .await
                     .map(|r| r.response);
             }
@@ -545,6 +591,7 @@ struct ResponseWithUsage {
     usage: Option<serde_json::Value>,
     body_bytes: u64,
     body_content: Option<String>,
+    sse_observer: Option<SseObserverHandle>,
 }
 
 async fn build_response(
@@ -553,6 +600,7 @@ async fn build_response(
     converting_responses: bool,
     responses_model: &str,
     _idle_timeout_ms: u64,
+    created_at: u64,
 ) -> Result<ResponseWithUsage, StatusCode> {
     let status = StatusCode::from_u16(upstream_resp.status().as_u16())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -611,6 +659,7 @@ async fn build_response(
             usage: None,
             body_bytes: len,
             body_content: Some(body_str),
+            sse_observer: None,
         });
     }
 
@@ -628,6 +677,7 @@ async fn build_response(
                 usage: None,
                 body_bytes: 0,
                 body_content: None,
+                sse_observer: None,
             });
         }
 
@@ -642,6 +692,7 @@ async fn build_response(
                 usage: None,
                 body_bytes: 0,
                 body_content: None,
+                sse_observer: None,
             });
         }
 
@@ -653,7 +704,13 @@ async fn build_response(
         let response = response_builder
             .body(Body::from(rewritten.clone()))
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        Ok(ResponseWithUsage { response, usage, body_bytes: len, body_content: Some(rewritten) })
+        Ok(ResponseWithUsage {
+            response,
+            usage,
+            body_bytes: len,
+            body_content: Some(rewritten),
+            sse_observer: None,
+        })
     } else {
         if converting_responses && is_sse {
             let raw_stream = upstream_resp.bytes_stream();
@@ -668,11 +725,14 @@ async fn build_response(
                 usage: None,
                 body_bytes: 0,
                 body_content: None,
+                sse_observer: None,
             });
         }
 
         if is_sse {
-            let body_stream = upstream_resp.bytes_stream();
+            let observer_handle = SseObserverHandle::new(created_at);
+            let body_stream =
+                ObservingSseStream::new(upstream_resp.bytes_stream(), observer_handle.clone());
             let response = response_builder
                 .body(Body::from_stream(body_stream))
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -681,6 +741,7 @@ async fn build_response(
                 usage: None,
                 body_bytes: 0,
                 body_content: None,
+                sse_observer: Some(observer_handle),
             });
         }
 
@@ -692,7 +753,13 @@ async fn build_response(
         let response = response_builder
             .body(Body::from(body_bytes.to_vec()))
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        Ok(ResponseWithUsage { response, usage, body_bytes: len, body_content: Some(body_str) })
+        Ok(ResponseWithUsage {
+            response,
+            usage,
+            body_bytes: len,
+            body_content: Some(body_str),
+            sse_observer: None,
+        })
     }
 }
 

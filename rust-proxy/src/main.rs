@@ -6,6 +6,7 @@ mod ipc;
 mod proxy;
 mod responses;
 mod routing;
+mod sse_observer;
 mod transform;
 
 use crate::app_state::{AppState, RoutingTable};
