@@ -158,19 +158,19 @@ export function DetailView({
   return (
     <div className="flex h-full flex-col bg-card">
       {/* Top: status + model + channel + request_id */}
-      <div className="shrink-0 border-b border-border px-6 py-4">
-        <div className="flex items-center gap-3">
+      <div className="shrink-0 border-b border-border px-3 py-3 sm:px-6 sm:py-4">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <span
             className="rounded-md px-2.5 py-1 font-mono text-xs font-bold"
             style={{ background: st.bg, color: st.fg }}
           >
             {record.response_status ?? "--"}
           </span>
-          <span className="text-[15px] font-bold text-foreground">
+          <span className="truncate text-[15px] font-bold text-foreground">
             {record.request_model}
           </span>
           <span className="text-xs text-muted-foreground">· {record.route_prefix}</span>
-          <span className="ml-auto font-mono text-[11px] text-muted-foreground/70">
+          <span className="ml-auto hidden font-mono text-[11px] text-muted-foreground/70 sm:inline">
             {shortText(record.request_id, 24)}
           </span>
         </div>
@@ -183,8 +183,7 @@ export function DetailView({
 
         {/* 4×2 metric grid — 首包/首Token/总耗时/生成 + 输入/输出/cache_read/cache_creation */}
         <div
-          className="mt-4 grid overflow-hidden rounded-lg border border-border bg-border"
-          style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 1 }}
+          className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:mt-4 sm:grid-cols-4"
         >
           <MetricCell
             label={t("detail.firstChunk")}
@@ -226,32 +225,32 @@ export function DetailView({
       <Tabs defaultValue="request" className="flex min-h-0 flex-1 flex-col">
         <TabsList
           variant="line"
-          className="shrink-0 !h-auto w-full justify-start gap-0 border-b border-border bg-transparent px-6 py-0"
+          className="shrink-0 !h-auto w-full justify-start gap-0 overflow-x-auto border-b border-border bg-transparent px-3 py-0 sm:px-6"
         >
           <TabsTrigger
             value="request"
-            className="mr-6 h-auto flex-none px-0.5 py-[11px] text-[13px] font-medium text-muted-foreground after:bottom-0 data-[state=active]:font-bold data-[state=active]:text-foreground"
+            className="mr-4 h-auto flex-none px-0.5 py-[11px] text-[13px] font-medium text-muted-foreground after:bottom-0 data-[state=active]:font-bold data-[state=active]:text-foreground sm:mr-6"
             style={{ '--tabs-line-color': 'var(--primary)', '--tabs-line-bottom': '0px' } as React.CSSProperties}
           >
             {t("detail.tabRequest")}
           </TabsTrigger>
           <TabsTrigger
             value="forward"
-            className="mr-6 h-auto flex-none px-0.5 py-[11px] text-[13px] font-medium text-muted-foreground after:bottom-0 data-[state=active]:font-bold data-[state=active]:text-foreground"
+            className="mr-4 h-auto flex-none px-0.5 py-[11px] text-[13px] font-medium text-muted-foreground after:bottom-0 data-[state=active]:font-bold data-[state=active]:text-foreground sm:mr-6"
             style={{ '--tabs-line-color': 'var(--primary)', '--tabs-line-bottom': '0px' } as React.CSSProperties}
           >
             {t("detail.tabForward")}
           </TabsTrigger>
           <TabsTrigger
             value="response"
-            className="mr-6 h-auto flex-none px-0.5 py-[11px] text-[13px] font-medium text-muted-foreground after:bottom-0 data-[state=active]:font-bold data-[state=active]:text-foreground"
+            className="mr-4 h-auto flex-none px-0.5 py-[11px] text-[13px] font-medium text-muted-foreground after:bottom-0 data-[state=active]:font-bold data-[state=active]:text-foreground sm:mr-6"
             style={{ '--tabs-line-color': 'var(--primary)', '--tabs-line-bottom': '0px' } as React.CSSProperties}
           >
             {t("detail.tabResponse")}
           </TabsTrigger>
           <TabsTrigger
             value="cost"
-            className="mr-6 h-auto flex-none px-0.5 py-[11px] text-[13px] font-medium text-muted-foreground after:bottom-0 data-[state=active]:font-bold data-[state=active]:text-foreground"
+            className="mr-4 h-auto flex-none px-0.5 py-[11px] text-[13px] font-medium text-muted-foreground after:bottom-0 data-[state=active]:font-bold data-[state=active]:text-foreground sm:mr-6"
             style={{ '--tabs-line-color': 'var(--primary)', '--tabs-line-bottom': '0px' } as React.CSSProperties}
           >
             {t("detail.tabCost")}
@@ -259,7 +258,7 @@ export function DetailView({
         </TabsList>
 
         <ScrollArea className="min-h-0 flex-1">
-          <div className="p-4">
+          <div className="p-3 sm:p-4">
             {/* Request Tab */}
             <TabsContent value="request" className="mt-0">
               <div className="space-y-3">

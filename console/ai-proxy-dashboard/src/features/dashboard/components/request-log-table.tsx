@@ -142,8 +142,7 @@ export function RequestLogTable({
       <div className="flex min-h-0 flex-1 flex-col">
         {/* Header row */}
         <div
-          className="grid shrink-0 items-center gap-2 border-b border-border px-6 py-3 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground"
-          style={{ gridTemplateColumns: "60px 78px 1fr 50px 62px 78px 50px 64px" }}
+          className="grid shrink-0 grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border px-3 py-2 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground sm:grid-cols-[60px_78px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
         >
           <span>
             <SortButton
@@ -153,7 +152,7 @@ export function RequestLogTable({
               onClick={() => toggleSort("created_at")}
             />
           </span>
-          <span>{t("logTable.colSource")}</span>
+          <span className="hidden sm:block">{t("logTable.colSource")}</span>
           <span>{t("logTable.colRoute")}</span>
           <span>
             <SortButton
@@ -163,7 +162,7 @@ export function RequestLogTable({
               onClick={() => toggleSort("response_status")}
             />
           </span>
-          <span>{t("logTable.firstLabel")}</span>
+          <span className="hidden sm:block">{t("logTable.firstLabel")}</span>
           <span>
             <SortButton
               label={t("logTable.colTokens")}
@@ -172,8 +171,8 @@ export function RequestLogTable({
               onClick={() => toggleSort("tokens")}
             />
           </span>
-          <span className="text-right">{t("logTable.colCacheHitRate")}</span>
-          <span className="text-right">{t("logTable.colPrice")}</span>
+          <span className="hidden text-right sm:block">{t("logTable.colCacheHitRate")}</span>
+          <span className="hidden text-right sm:block">{t("logTable.colPrice")}</span>
         </div>
 
         {/* Body */}
@@ -206,9 +205,8 @@ export function RequestLogTable({
                     onClick={() => onSelect(item.request_id)}
                     onMouseEnter={() => setHoveredId(item.request_id)}
                     onMouseLeave={() => setHoveredId(null)}
-                    className="grid cursor-pointer items-center gap-2 border-b border-border/50 border-l-[3px] px-6 py-3 text-xs transition-colors"
+                    className="grid cursor-pointer grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border/50 border-l-[3px] px-3 py-2.5 text-xs transition-colors sm:grid-cols-[60px_78px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
                     style={{
-                      gridTemplateColumns: "60px 78px 1fr 50px 62px 78px 50px 64px",
                       borderLeftColor: isSelected ? "var(--primary)" : isHovered ? "var(--accent-foreground)" : "transparent",
                       background: isSelected ? "var(--accent)" : isHovered ? "var(--accent/50)" : "transparent",
                     }}
@@ -220,7 +218,7 @@ export function RequestLogTable({
 
                     {/* Key */}
                     <span
-                      className="truncate text-[11.5px] text-muted-foreground"
+                      className="hidden truncate text-[11.5px] text-muted-foreground sm:block"
                       title={item.client_label ?? item.api_key_name ?? ""}
                     >
                       {item.client_label ?? item.api_key_name ?? "—"}
@@ -244,7 +242,7 @@ export function RequestLogTable({
                     </span>
 
                     {/* 首Token */}
-                    <span className="font-mono text-[11.5px] text-foreground">
+                    <span className="hidden font-mono text-[11.5px] text-foreground sm:block">
                       {formatDuration(timing.first_token_latency_ms)}
                     </span>
 
@@ -254,13 +252,13 @@ export function RequestLogTable({
                     </span>
 
                     {/* Cache */}
-                    <span className="text-right font-mono text-[11px] text-muted-foreground">
+                    <span className="hidden text-right font-mono text-[11px] text-muted-foreground sm:block">
                       {cacheHitRate != null ? `${Math.round(cacheHitRate)}%` : "—"}
                     </span>
 
                     {/* 价格 */}
                     <span
-                      className="text-right font-mono text-[11px] text-foreground"
+                      className="hidden text-right font-mono text-[11px] text-foreground sm:block"
                       title={item.response_usage?.estimated ? t("logTable.priceEstimatedHint") : undefined}
                     >
                       {item.response_usage?.cost != null

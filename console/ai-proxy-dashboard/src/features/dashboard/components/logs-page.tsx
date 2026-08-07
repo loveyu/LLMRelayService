@@ -170,7 +170,7 @@ export function LogsPage({
   return (
     <div className="flex h-full flex-col gap-0">
       {/* Filter Bar — inline, no Card */}
-      <div className="flex flex-wrap items-center gap-2.5 border-b border-border bg-card px-4 py-3 sm:px-6">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2 sm:gap-2.5 sm:px-6 sm:py-3">
         {/* Search */}
         <div className="relative w-full sm:w-auto sm:flex-1 sm:max-w-[280px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/60" />
@@ -304,7 +304,7 @@ export function LogsPage({
           />
 
           {!liveMode && (
-            <div className="shrink-0 border-t border-border px-4 py-3">
+            <div className="shrink-0 border-t border-border px-3 py-2 sm:px-4 sm:py-3">
               <Pagination
                 total={total}
                 limit={limit}
