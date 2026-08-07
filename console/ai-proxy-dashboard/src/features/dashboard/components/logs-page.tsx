@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
+  Loader2,
   Radio,
   RotateCcw,
   Search,
@@ -59,6 +60,7 @@ export function LogsPage({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ConsoleRequestDetail | null>(null)
   const [detailError, setDetailError] = useState("")
+  const [detailLoading, setDetailLoading] = useState(false)
   const detailLoadRef = useRef(0)
   const { t } = useTranslation()
   const isMobile = useIsMobile()
@@ -67,10 +69,13 @@ export function LogsPage({
     if (!selectedId) {
       setDetail(null)
       setDetailError("")
+      setDetailLoading(false)
       return
     }
     const loadId = ++detailLoadRef.current
+    setDetail(null)
     setDetailError("")
+    setDetailLoading(true)
     void (async () => {
       try {
         const data = await fetchRequestDetail(selectedId)
@@ -84,6 +89,8 @@ export function LogsPage({
           return
         }
         setDetailError(message)
+      } finally {
+        if (loadId === detailLoadRef.current) setDetailLoading(false)
       }
     })()
   }, [selectedId, onUnauthorized])
@@ -284,10 +291,10 @@ export function LogsPage({
         </Button>
       </div>
 
-      {/* Master-detail layout — two columns on desktop, stacked with a bottom-sheet detail on mobile */}
-      <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[1.45fr_1fr]">
+      {/* Log list; details open in a responsive sheet on every viewport. */}
+      <div className="flex min-h-0 flex-1 flex-col">
         {/* Left: compact log table */}
-        <div className="flex h-full min-h-0 flex-col overflow-hidden lg:border-r lg:border-border">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden">
           <RequestLogTable
             variant="compact"
             loading={loading}
@@ -316,25 +323,35 @@ export function LogsPage({
           )}
         </div>
 
-        {/* Right: detail view (desktop only) */}
-        <div className="hidden h-full min-h-0 flex-col overflow-hidden lg:flex">
-          <DetailView detail={detail} error={detailError} />
-        </div>
       </div>
 
-      {/* Mobile: log detail slides up from the bottom */}
+      {/* Details slide up on mobile and in from the right on larger screens. */}
       <Sheet
-        open={isMobile && selectedId !== null}
+        open={selectedId !== null}
         onOpenChange={(open) => {
           if (!open) setSelectedId(null)
         }}
       >
-        <SheetContent side="bottom" className="h-[88vh] max-h-[88vh] gap-0 p-0">
-          <div className="flex shrink-0 justify-center pb-1 pt-2.5">
-            <span className="h-1.5 w-10 rounded-full bg-border" />
-          </div>
+        <SheetContent
+          side={isMobile ? "bottom" : "right"}
+          className={isMobile
+            ? "h-[88vh] max-h-[88vh] gap-0 p-0"
+            : "h-full w-[min(860px,75vw)] max-w-none gap-0 p-0"}
+        >
+          {isMobile ? (
+            <div className="flex shrink-0 justify-center pb-1 pt-2.5">
+              <span className="h-1.5 w-10 rounded-full bg-border" />
+            </div>
+          ) : null}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <DetailView detail={detail} error={detailError} />
+            {detailLoading ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
+                <Loader2 className="size-5 animate-spin" />
+                <span className="text-xs">{t("detail.loadingDesc")}</span>
+              </div>
+            ) : (
+              <DetailView detail={detail} error={detailError} />
+            )}
           </div>
         </SheetContent>
       </Sheet>
