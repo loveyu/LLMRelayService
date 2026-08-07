@@ -132,7 +132,7 @@ async function resetDatabase(): Promise<{ success: boolean; message?: string; er
   }
 }
 
-Bun.serve({
+const bunServer = Bun.serve({
   hostname: HOST,
   port: PORT,
   idleTimeout: Number.isFinite(IDLE_TIMEOUT_SECONDS) && IDLE_TIMEOUT_SECONDS >= 0 ? IDLE_TIMEOUT_SECONDS : 0,
@@ -189,13 +189,16 @@ import('./rust-process').then(({ startRustProxy: startRust, stopRustProxy }) => 
     startRustBridge();
   }).catch(() => {});
 
-  // Set up IPC message handler for log forwarding from Rust
+  // Set up IPC message handler for log forwarding from Rust.
+  // Sequential queue — ensures request_log is always inserted before response_log updates.
+  let ipcQueue: Promise<void> = Promise.resolve();
   import('./rust-bridge').then(({ setMessageHandler }) => {
     setMessageHandler((msg) => {
-      switch (msg.type) {
-        case 'request_log':
-          import('./console-store').then(({ saveConsoleRequest }) => {
-            saveConsoleRequest({
+      ipcQueue = ipcQueue.then(async () => {
+        switch (msg.type) {
+          case 'request_log': {
+            const { saveConsoleRequest } = await import('./console-store');
+            await saveConsoleRequest({
               request_id: msg.requestId,
               created_at: msg.createdAt,
               route_prefix: msg.routePrefix,
@@ -221,44 +224,69 @@ import('./rust-process').then(({ startRustProxy: startRust, stopRustProxy }) => 
               original_request_model: null,
               retry_attempt: 0,
               source_request_type: 'chat_completion',
-            } as any).catch((err: any) =>
-              console.warn('[rust-bridge] Failed to save request log:', err?.message ?? err),
-            );
-          }).catch(() => {});
-          break;
-        case 'response_log':
-          import('./console-store').then(({ saveConsoleResponse }) => {
-            saveConsoleResponse({
+            } as any);
+            break;
+          }
+          case 'response_log': {
+            const { saveConsoleResponse } = await import('./console-store');
+            await saveConsoleResponse({
               request_id: msg.requestId,
               response_status: msg.responseStatus,
               response_status_text: msg.responseStatusText,
               response_headers: msg.responseHeaders,
-              response_body_bytes: msg.responseBodyBytes,
-              first_chunk_at: msg.firstChunkAt ?? undefined,
-              first_token_at: msg.firstTokenAt ?? undefined,
-              completed_at: msg.completedAt ?? undefined,
-              has_streaming_content: msg.hasStreamingContent,
-              response_model: msg.responseModel ?? undefined,
-              stop_reason: msg.stopReason ?? undefined,
+              response_payload: null,
+              response_payload_truncated: false,
               response_usage: {
                 model: msg.responseModel ?? '',
+                stop_reason: msg.stopReason ?? '',
                 input_tokens: msg.inputTokens ?? 0,
                 output_tokens: msg.outputTokens ?? 0,
                 total_tokens: msg.totalTokens ?? 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+                cached_input_tokens: 0,
+                reasoning_output_tokens: 0,
+                ephemeral_5m_input_tokens: 0,
+                ephemeral_1h_input_tokens: 0,
               },
-            } as any).catch((err: any) =>
-              console.warn('[rust-bridge] Failed to save response log:', err?.message ?? err),
-            );
-          }).catch(() => {});
-          break;
-      }
+              response_timing: {
+                response_body_bytes: msg.responseBodyBytes ?? 0,
+                first_chunk_at: msg.firstChunkAt ?? null,
+                first_token_at: msg.firstTokenAt ?? null,
+                completed_at: msg.completedAt ?? null,
+                has_streaming_content: msg.hasStreamingContent ?? false,
+              },
+            });
+            break;
+          }
+        }
+      }).catch((err: any) => {
+        console.warn('[rust-bridge] Failed to save log:', err?.message ?? err);
+      });
     });
   }).catch(() => {});
 
-  // Graceful shutdown: stop Rust when TS exits
+  // Graceful shutdown: stop accepting new requests, drain in-flight, then stop Rust
+  let shuttingDown = false;
+  const GRACEFUL_TIMEOUT_MS = 15_000;
   const doCleanup = () => {
-    stopRustProxy().catch(() => {});
-    process.exit(0);
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log('[server] Graceful shutdown initiated...');
+    bunServer.stop(); // stop accepting new connections
+
+    // Poll until in-flight requests complete or timeout
+    const deadline = Date.now() + GRACEFUL_TIMEOUT_MS;
+    const drainAndExit = () => {
+      if (Date.now() >= deadline || bunServer.pendingRequests === 0) {
+        console.log(`[server] Draining done (${bunServer.pendingRequests} pending), exiting`);
+        stopRustProxy().catch(() => {});
+        process.exit(0);
+      } else {
+        setTimeout(drainAndExit, 100);
+      }
+    };
+    drainAndExit();
   };
   process.on('SIGTERM', doCleanup);
   process.on('SIGINT', doCleanup);

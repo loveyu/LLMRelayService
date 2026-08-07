@@ -242,6 +242,8 @@ pub async fn proxy_handler(
             &headers,
             &fwd_headers,
             &request_body,
+            auth_result.api_key_id.clone(),
+            auth_result.api_key_name.clone(),
         );
 
         match upstream_result {
@@ -277,6 +279,8 @@ pub async fn proxy_handler(
 
                     let usage = result.usage.clone();
                     let body_bytes = result.body_bytes;
+                    let ttfb_ms = t_ttfb.as_millis() as u64;
+                    let first_chunk = created_at.checked_add(ttfb_ms);
                     {
                         let ipc = state.ipc.clone();
                         let rid = request_id.clone();
@@ -288,12 +292,12 @@ pub async fn proxy_handler(
                             extract_token_counts(&usage);
                         tokio::spawn(async move {
                             ipc.send(RustToTsMessage::ResponseLog {
-                                request_id: rid,
+                                request_id: rid.clone(),
                                 response_status: status,
                                 response_status_text: "OK".to_string(),
                                 response_headers: rh,
                                 response_body_bytes: body_bytes,
-                                first_chunk_at: None,
+                                first_chunk_at: first_chunk,
                                 first_token_at: None,
                                 completed_at: Some(now),
                                 has_streaming_content: is_sse_val,
@@ -828,6 +832,8 @@ fn send_request_log(
     headers: &HeaderMap,
     fwd_headers: &reqwest::header::HeaderMap,
     request_body: &[u8],
+    api_key_id: Option<String>,
+    api_key_name: Option<String>,
 ) {
     let ipc = state.ipc.clone();
     let rid = request_id.to_string();
@@ -873,8 +879,8 @@ fn send_request_log(
             forwarded_payload: fp,
             original_headers: oh,
             forward_headers: fh,
-            api_key_id: None,
-            api_key_name: None,
+            api_key_id,
+            api_key_name,
         });
     });
 }

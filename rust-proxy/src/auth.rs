@@ -4,9 +4,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct AuthResult {
-    #[expect(dead_code)]
     pub api_key_id: Option<String>,
-    #[expect(dead_code)]
     pub api_key_name: Option<String>,
     #[expect(dead_code)]
     pub quota_exhausted: bool,
