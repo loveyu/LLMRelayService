@@ -27,6 +27,8 @@
 - 对项目的功能/行为改动，默认**同步更新 changelog**；不要只改代码不记变更。
 - **代码改动和对应的 changelog 更新必须在同一个 commit 中提交**，禁止拆分成多个 commit。
 - 如果根目录 lockfile 因依赖变化被修改（例如 `bun.lock`），不要漏提、漏 push。
+- **禁止将 API Key、token、密码等敏感凭证提交到仓库**。提交前检查变更中是否包含 `sk-`、`api_key`、`secret` 等敏感信息。
+- **测试脚本（bench、compare 等一次性验证脚本）无需提交到仓库**，用完即删。
 
 ### Changelog 规范
 - 变更日志统一存放在项目根目录 `changelog/` 文件夹下，**按日期一天一个文件**，文件名格式 `YYYY-MM-DD.md`（如 `changelog/2026-04-18.md`）。
