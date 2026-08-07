@@ -54,8 +54,18 @@ jobs:
       - name: Rust clippy
         run: cd rust-proxy && cargo clippy -- -D warnings
 
-      - name: Rust build
-        run: cd rust-proxy && cargo build --release
+      - name: Rust build (release, amd64 musl)
+        run: |
+          cd rust-proxy
+          rustup target add x86_64-unknown-linux-musl
+          cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Upload Rust binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-proxy
+          path: rust-proxy/target/x86_64-unknown-linux-musl/release/rust-proxy
+          retention-days: 1
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -70,6 +80,12 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Download Rust binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-proxy
+          path: rust-proxy/target/release/
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
@@ -96,7 +112,6 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

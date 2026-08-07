@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+rust-proxy/target
+*.db
+*.sqlite
+.env
+.local
+scripts
