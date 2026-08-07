@@ -234,7 +234,7 @@ import('./rust-process').then(({ startRustProxy: startRust, stopRustProxy }) => 
               response_status: msg.responseStatus,
               response_status_text: msg.responseStatusText,
               response_headers: msg.responseHeaders,
-              response_payload: null,
+              response_payload: msg.responsePayload ?? null,
               response_payload_truncated: false,
               response_usage: {
                 model: msg.responseModel ?? '',

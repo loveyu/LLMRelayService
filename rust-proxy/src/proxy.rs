@@ -280,6 +280,7 @@ pub async fn proxy_handler(
 
                     let usage = result.usage.clone();
                     let body_bytes = result.body_bytes;
+                    let body_content = result.body_content.clone();
                     let ttfb_ms = t_ttfb.as_millis() as u64;
                     let first_chunk = created_at.checked_add(ttfb_ms);
                     {
@@ -300,7 +301,7 @@ pub async fn proxy_handler(
                                 response_headers: rh,
                                 response_body_bytes: body_bytes,
                                 first_chunk_at: first_chunk,
-                                first_token_at: None,
+                                first_token_at: first_chunk,
                                 completed_at: Some(now),
                                 has_streaming_content: is_sse_val,
                                 response_model: route.resolved_model.clone(),
@@ -311,6 +312,7 @@ pub async fn proxy_handler(
                                 cache_creation_input_tokens: cache.cache_creation,
                                 cache_read_input_tokens: cache.cache_read,
                                 cached_input_tokens: cache.cached,
+                                response_payload: body_content,
                             });
                         });
                     }
@@ -541,6 +543,7 @@ struct ResponseWithUsage {
     response: Response,
     usage: Option<serde_json::Value>,
     body_bytes: u64,
+    body_content: Option<String>,
 }
 
 async fn build_response(
@@ -596,12 +599,18 @@ async fn build_response(
         let len = body_bytes.len() as u64;
         let converted = crate::responses::convert_chat_to_responses(&body_bytes)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let body_str = String::from_utf8_lossy(&converted).to_string();
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/json")
             .body(Body::from(converted))
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        return Ok(ResponseWithUsage { response, usage: None, body_bytes: len });
+        return Ok(ResponseWithUsage {
+            response,
+            usage: None,
+            body_bytes: len,
+            body_content: Some(body_str),
+        });
     }
 
     if let Some(rw) = rewriter {
@@ -613,7 +622,12 @@ async fn build_response(
                 .header("content-type", "text/event-stream")
                 .body(Body::from_stream(sse_stream))
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            return Ok(ResponseWithUsage { response, usage: None, body_bytes: 0 });
+            return Ok(ResponseWithUsage {
+                response,
+                usage: None,
+                body_bytes: 0,
+                body_content: None,
+            });
         }
 
         if is_sse {
@@ -622,7 +636,12 @@ async fn build_response(
             let response = response_builder
                 .body(Body::from_stream(body_stream))
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            return Ok(ResponseWithUsage { response, usage: None, body_bytes: 0 });
+            return Ok(ResponseWithUsage {
+                response,
+                usage: None,
+                body_bytes: 0,
+                body_content: None,
+            });
         }
 
         // Non-SSE with model rewriter: read full body, rewrite, extract usage
@@ -631,9 +650,9 @@ async fn build_response(
         let rewritten = rw.rewrite_chunk(&String::from_utf8_lossy(&body_bytes));
         let usage = extract_usage(&rewritten);
         let response = response_builder
-            .body(Body::from(rewritten))
+            .body(Body::from(rewritten.clone()))
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        Ok(ResponseWithUsage { response, usage, body_bytes: len })
+        Ok(ResponseWithUsage { response, usage, body_bytes: len, body_content: Some(rewritten) })
     } else {
         if converting_responses && is_sse {
             let raw_stream = upstream_resp.bytes_stream();
@@ -643,7 +662,12 @@ async fn build_response(
                 .header("content-type", "text/event-stream")
                 .body(Body::from_stream(sse_stream))
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            return Ok(ResponseWithUsage { response, usage: None, body_bytes: 0 });
+            return Ok(ResponseWithUsage {
+                response,
+                usage: None,
+                body_bytes: 0,
+                body_content: None,
+            });
         }
 
         if is_sse {
@@ -651,18 +675,23 @@ async fn build_response(
             let response = response_builder
                 .body(Body::from_stream(body_stream))
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            return Ok(ResponseWithUsage { response, usage: None, body_bytes: 0 });
+            return Ok(ResponseWithUsage {
+                response,
+                usage: None,
+                body_bytes: 0,
+                body_content: None,
+            });
         }
 
         // Non-SSE: read full body, extract usage
         let body_bytes = upstream_resp.bytes().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
         let len = body_bytes.len() as u64;
-        let body_str = String::from_utf8_lossy(&body_bytes);
+        let body_str = String::from_utf8_lossy(&body_bytes).to_string();
         let usage = extract_usage(&body_str);
         let response = response_builder
             .body(Body::from(body_bytes.to_vec()))
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        Ok(ResponseWithUsage { response, usage, body_bytes: len })
+        Ok(ResponseWithUsage { response, usage, body_bytes: len, body_content: Some(body_str) })
     }
 }
 

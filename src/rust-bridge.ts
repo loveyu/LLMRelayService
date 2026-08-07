@@ -124,6 +124,7 @@ interface RustResponseLog {
   cacheCreationInputTokens: number | null;
   cacheReadInputTokens: number | null;
   cachedInputTokens: number | null;
+  responsePayload: string | null;
 }
 
 // ── Frame codec (mirrors Rust FrameCodec) ──────────────────────────────────
