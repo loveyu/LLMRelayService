@@ -43,15 +43,10 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache Rust
-        uses: actions/cache@v4
+      - name: Cache Rust deps
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            rust-proxy/target/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rust-proxy/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          workspaces: rust-proxy
 
       - name: Rust format check
         run: cd rust-proxy && cargo fmt -- --check
