@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { useIsMobile } from "@/hooks/use-is-mobile"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -29,6 +30,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Sheet,
+  SheetContent,
+} from "@/components/ui/sheet"
 import {
   Empty,
   EmptyContent,
@@ -443,6 +448,7 @@ export function ProvidersPage({
   const [providers, setProviders] = useState<ProviderInfo[] | null>(null)
   const [error, setError] = useState("")
   const { t } = useTranslation()
+  const isMobile = useIsMobile()
   const [searchQuery, setSearchQuery] = useState("")
   const [typeFilter, setTypeFilter] = useState("all")
   const [statusFilter, setStatusFilter] = useState("all")
@@ -1276,10 +1282,27 @@ export function ProvidersPage({
                 )}
               </div>
             </div>
-            {/* Edit pane */}
-            <div className="flex min-h-0 flex-col overflow-auto">{renderEditPane()}</div>
+            {/* Edit pane — desktop only */}
+            <div className="hidden min-h-0 flex-col overflow-auto lg:flex">{renderEditPane()}</div>
           </div>
         )}
+
+      {/* Mobile: edit sheet from bottom */}
+      <Sheet
+        open={isMobile && dialogOpen && dialogMode === "edit"}
+        onOpenChange={(open) => {
+          if (!open) setDialogOpen(false)
+        }}
+      >
+        <SheetContent side="bottom" className="h-[92vh] max-h-[92vh] gap-0 p-0">
+          <div className="flex shrink-0 justify-center pb-1 pt-2.5">
+            <span className="h-1.5 w-10 rounded-full bg-border" />
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {renderEditPane()}
+          </div>
+        </SheetContent>
+      </Sheet>
       </div>
 
       {/* 新增渠道弹窗 — Design: LRS Clear 风格五 */}

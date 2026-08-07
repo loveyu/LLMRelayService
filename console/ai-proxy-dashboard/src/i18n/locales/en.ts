@@ -54,6 +54,7 @@ export default {
 
   // ── Nav bar ──
   nav: {
+    menu: "Menu",
     monitor: "Monitor",
     usage: "Usage",
     providers: "Providers",

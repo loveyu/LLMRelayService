@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { Fragment, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -211,24 +211,55 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
+// Renders an API path with a line-break opportunity after every "/", so long
+// paths wrap cleanly at segment boundaries on narrow screens instead of
+// breaking mid-token.
+function PathCode({ path, className }: { path: string; className?: string }) {
+  const segments = path.split("/")
+  return (
+    <code className={className}>
+      {segments.map((segment, index) => (
+        <Fragment key={index}>
+          {index > 0 && "/"}
+          {index > 0 && <wbr />}
+          {segment}
+        </Fragment>
+      ))}
+    </code>
+  )
+}
+
 function EndpointItem({ ep }: { ep: Endpoint }) {
   const [expanded, setExpanded] = useState(false)
 
   return (
     <div className="rounded-md border">
       <div
-        className="flex items-center gap-3 p-3 hover:bg-muted/50 cursor-pointer select-none"
+        className="flex cursor-pointer select-none flex-col gap-1.5 p-3 hover:bg-muted/50 md:flex-row md:items-center md:gap-3"
         onClick={() => ep.body && setExpanded((v) => !v)}
       >
-        <MethodBadge method={ep.method} />
-        <code className="flex-1 text-sm font-mono">{ep.path}</code>
-        <span className="text-sm text-muted-foreground">{ep.description}</span>
-        {ep.auth && <Badge variant="outline" className="text-xs">需认证</Badge>}
-        {ep.body && (
-          expanded
-            ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            : <ChevronRight className="h-4 w-4 text-muted-foreground" />
-        )}
+        <div className="flex min-w-0 items-center gap-2 md:flex-1 md:gap-3">
+          <MethodBadge method={ep.method} />
+          <PathCode path={ep.path} className="min-w-0 flex-1 break-words text-sm font-mono md:truncate" />
+          {ep.body && (
+            <span className="md:hidden">
+              {expanded
+                ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 md:flex-none">
+          <span className="text-sm text-muted-foreground">{ep.description}</span>
+          {ep.auth && <Badge variant="outline" className="text-xs">需认证</Badge>}
+          {ep.body && (
+            <span className="hidden md:block">
+              {expanded
+                ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+            </span>
+          )}
+        </div>
       </div>
 
       {expanded && ep.body && (
@@ -267,16 +298,16 @@ export function ApiDocsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="rounded-md bg-muted p-3">
-            <div className="flex items-center justify-between">
-              <code className="text-sm font-mono">Authorization: Bearer &lt;GATEWAY_API_KEY&gt;</code>
+            <div className="flex items-center justify-between gap-2">
+              <code className="min-w-0 break-all text-sm font-mono">Authorization: Bearer &lt;GATEWAY_API_KEY&gt;</code>
               <CopyButton text={`Authorization: Bearer <YOUR_GATEWAY_API_KEY>`} />
             </div>
           </div>
 
           <div className="rounded-md bg-muted p-3">
             <div className="text-sm font-mono text-muted-foreground">Base URL</div>
-            <div className="flex items-center justify-between">
-              <code className="text-sm font-mono">{BASE_URL}</code>
+            <div className="flex items-center justify-between gap-2">
+              <code className="min-w-0 break-all text-sm font-mono">{BASE_URL}</code>
               <CopyButton text={BASE_URL} />
             </div>
           </div>

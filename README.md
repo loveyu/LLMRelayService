@@ -7,9 +7,21 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun-black)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/language-TypeScript-blue)](https://www.typescriptlang.org)
+[![Rust](https://img.shields.io/badge/engine-Rust-orange)](https://www.rust-lang.org)
 [![Docker Image](https://img.shields.io/badge/ghcr.io-gojam11%2Fllmrelayservice-blue?logo=docker)](https://github.com/GoJam11/LLMRelayService/pkgs/container/llmrelayservice)
 
-LRS 是一个基于 **Bun + Hono** 的轻量 LLM 中继服务，把多个 AI 服务商统一在单一入口下，并通过内置 Web 控制台精确观测每一笔请求的延迟、Token 用量与缓存命中。
+LRS 是一个基于 **Bun + Hono + Rust** 架构的 LLM 中继服务。核心转发由 **Rust** 高性能引擎处理，管理面（配置 CRUD、数据库、Web 控制台）由 **TypeScript** 实现，两者通过 Unix Socket IPC 通信。
+
+**架构**
+
+```
+Client ──► Rust Proxy (:3301) ──► 上游 LLM APIs   （转发层，独立端口）
+                ↕ IPC
+Client ──► TS  Server (:3000)  ──► Console UI / OpenAPI / DB   （管理层）
+```
+
+- **Rust 代理**：路由匹配、认证、请求转发、body 变换、超时控制、故障转移、流式 SSE——全部无状态、异步非阻塞
+- **TS 服务器**：管理 Rust 子进程生命周期（spawn/重启/健康检查）、配置热更新（变更后实时推送）、日志写入 DB
 
 - **🪶 轻量透传** — 默认不做格式转换，客户端发什么就转发什么（仅替换认证头），不引入字段丢失、流式协议错位等兼容性问题。
 - **🔍 全文请求记录** — 完整保存每笔请求的原始请求体、真实转发请求体与响应，出问题直接翻日志对照定位。
@@ -244,6 +256,12 @@ Railway / Render 等平台部署时构建命令同上。
 | `DATABASE_URL` | ✅ | 数据库连接字符串。PostgreSQL：`postgresql://...`；SQLite：`sqlite:./data/llm-relay.db`（内嵌，无需额外数据库）。部署时确定，运行时不可切换 |
 | `GATEWAY_API_KEY` | ✅ | 客户端访问网关所需的 key，同时用作控制台登录密码 |
 | `PORT` | — | 监听端口，默认 `3300` |
+| `SERVER_HOST` | — | 监听地址，默认 `0.0.0.0` |
+| `RUST_PROXY_HOST` | — | Rust 代理绑定地址，默认 `127.0.0.1`（Docker 用 `0.0.0.0`） |
+| `RUST_PROXY_PORT` | — | Rust 代理监听端口，默认 `3301` |
+| `RUST_PROXY_BIN` | — | Rust 二进制路径，默认自动检测 |
+| `RUST_LOG` | — | Rust 日志级别，默认 `rust_proxy=info` |
+| `LRS_IPC_SOCKET` | — | IPC socket 路径，默认 `/tmp/lrs-ipc.sock` |
 | `UPSTREAM_DEFAULT_FIRST_BYTE_TIMEOUT_MS` | — | 普通请求等待上游响应头的默认超时时间，默认 `300000` 毫秒；可在控制台配置页持久化覆盖 |
 | `UPSTREAM_STREAM_FIRST_BYTE_TIMEOUT_MS` | — | 流式请求等待上游响应头的默认超时时间，默认 `300000` 毫秒；可在控制台配置页持久化覆盖 |
 | `UPSTREAM_IMAGE_FIRST_BYTE_TIMEOUT_MS` | — | 图片端点等待上游响应头的默认超时时间，默认 `300000` 毫秒；可在控制台配置页持久化覆盖 |
@@ -313,10 +331,22 @@ Codex CLI / Codex App 等客户端使用 OpenAI Responses API（`POST /v1/respon
 ```
 src/
   index.ts              # Hono 入口，CORS、请求分流、转发逻辑
+  server.ts             # Bun 服务入口，管理 Rust 子进程生命周期
   config.ts             # 路由解析（resolveRoute / resolveRouteByModel）
   console-ui.ts         # 控制台静态资源托管与 /__console/* API
+  rust-process.ts       # Rust 代理进程管理器（spawn/重启/健康检查）
+  rust-bridge.ts        # TS ↔ Rust IPC 通信客户端
   providers/            # Anthropic / OpenAI 适配器
   db/                   # Drizzle ORM + PostgreSQL
+rust-proxy/
+  src/main.rs           # Rust Axum server 入口
+  src/proxy.rs          # HTTP 代理（路由/认证/failover/body 变换）
+  src/routing.rs        # 路由匹配（显式/模型/别名）
+  src/config.rs         # 配置类型（与 TS 对齐）
+  src/ipc.rs            # Unix Socket IPC 双向通信
+  src/auth.rs           # API key 认证（SHA-256）
+  src/failover.rs       # 故障转移策略
+  src/transform.rs      # Body 变换 + ModelRewriter
 console/
   ai-proxy-dashboard/   # Vite + React 控制台前端
 drizzle/                # 数据库迁移文件

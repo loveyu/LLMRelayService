@@ -156,7 +156,7 @@ export function DetailView({
   const costRows = getCostMetricRows(usage, record.request_model, record.upstream_type)
 
   return (
-    <div className="flex h-full flex-col bg-[#fdffff]">
+    <div className="flex h-full flex-col bg-card">
       {/* Top: status + model + channel + request_id */}
       <div className="shrink-0 border-b border-border px-6 py-4">
         <div className="flex items-center gap-3">

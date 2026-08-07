@@ -33,3 +33,19 @@
 - 完成任何需求后，必须在当天对应的 `changelog/YYYY-MM-DD.md` 中追加记录；若该文件不存在则新建。
 - 文件格式：顶部 `# YYYY-MM-DD`，按 `### 新增` / `### 变更` / `### 修复` 分组用列表项描述变更，描述要简明且包含实现方式。
 - **不再使用根目录 `CHANGELOG.md`**，历史内容已迁移至 `changelog/` 目录。
+
+## Rust Proxy (`rust-proxy/`)
+
+### 质量门禁
+- 改动 Rust 代码后，**必须**在 push 前通过以下检查：
+  - `cd rust-proxy && cargo fmt -- --check` — 格式检查（配置见 `rustfmt.toml`）
+  - `cd rust-proxy && cargo clippy -- -D warnings` — 零 warning 门禁
+  - `cd rust-proxy && cargo build` — 编译通过
+- 如果 clippy 有无法自动修复的 warning，用 `#[expect(dead_code)]` 或 `#[allow(clippy::xxx)]` 显式标注，不要留 warning。
+- 新增模块时在 `src/main.rs` 添加 `mod xxx;` 声明。
+
+### 代码风格
+- `rustfmt.toml`: `max_width = 100`, `tab_spaces = 4`, `edition = "2021"`
+- 优先使用 `serde_json::Value` / `serde_json::json!()` 处理 JSON，与 TS 的 `JsonRecord` 对应
+- 新模块用 `pub` 导出供外部调用，内部辅助函数保持 `fn`（不 pub）
+- 错误处理：proxy handler 返回 `Result<Response, StatusCode>`；内部可失败逻辑用 `Result<_, Box<dyn Error>>`

@@ -18,9 +18,11 @@ import {
 import { Combobox } from "@/components/ui/combobox"
 import { Input } from "@/components/ui/input"
 import { Pagination } from "@/components/ui/pagination"
+import { Sheet, SheetContent } from "@/components/ui/sheet"
 import { RequestLogTable } from "@/features/dashboard/components/request-log-table"
 import { DetailView } from "@/features/dashboard/components/detail-view"
 import { useDashboardData } from "@/features/dashboard/hooks/use-dashboard-data"
+import { useIsMobile } from "@/hooks/use-is-mobile"
 import { fetchRequestDetail } from "@/features/dashboard/api"
 import type { RequestSortKey, SortDirection } from "@/features/dashboard/api"
 import type { ConsoleRequestDetail } from "@/features/dashboard/types"
@@ -59,6 +61,7 @@ export function LogsPage({
   const [detailError, setDetailError] = useState("")
   const detailLoadRef = useRef(0)
   const { t } = useTranslation()
+  const isMobile = useIsMobile()
 
   useEffect(() => {
     if (!selectedId) {
@@ -167,9 +170,9 @@ export function LogsPage({
   return (
     <div className="flex h-full flex-col gap-0">
       {/* Filter Bar — inline, no Card */}
-      <div className="flex items-center gap-2.5 border-b border-border bg-card px-6 py-3">
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-border bg-card px-4 py-3 sm:px-6">
         {/* Search */}
-        <div className="relative flex-1" style={{ maxWidth: 280 }}>
+        <div className="relative w-full sm:w-auto sm:flex-1 sm:max-w-[280px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/60" />
           <Input
             value={searchQuery}
@@ -281,10 +284,10 @@ export function LogsPage({
         </Button>
       </div>
 
-      {/* Master-detail layout — 1.45fr 1fr, matching design spec */}
-      <div className="grid min-h-0 flex-1 grid-cols-[1.45fr_1fr]">
+      {/* Master-detail layout — two columns on desktop, stacked with a bottom-sheet detail on mobile */}
+      <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[1.45fr_1fr]">
         {/* Left: compact log table */}
-        <div className="flex h-full min-h-0 flex-col border-r border-border overflow-hidden">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden lg:border-r lg:border-border">
           <RequestLogTable
             variant="compact"
             loading={loading}
@@ -313,11 +316,28 @@ export function LogsPage({
           )}
         </div>
 
-        {/* Right: detail view */}
-        <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        {/* Right: detail view (desktop only) */}
+        <div className="hidden h-full min-h-0 flex-col overflow-hidden lg:flex">
           <DetailView detail={detail} error={detailError} />
         </div>
       </div>
+
+      {/* Mobile: log detail slides up from the bottom */}
+      <Sheet
+        open={isMobile && selectedId !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedId(null)
+        }}
+      >
+        <SheetContent side="bottom" className="h-[88vh] max-h-[88vh] gap-0 p-0">
+          <div className="flex shrink-0 justify-center pb-1 pt-2.5">
+            <span className="h-1.5 w-10 rounded-full bg-border" />
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <DetailView detail={detail} error={detailError} />
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

@@ -20,6 +20,7 @@ import type {
   ProviderInfo,
   ProviderMutationPayload,
   UpdateModelMetadataPayload,
+  RustProxyStatus,
 } from "@/features/dashboard/types"
 
 export const DEFAULT_REQUEST_LIMIT = 50
@@ -353,4 +354,12 @@ export function updateGatewayFailoverPolicy(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   })
+}
+
+export function fetchRustProxyStatus(): Promise<RustProxyStatus> {
+  return requestJson("/__console/api/rust-proxy/status")
+}
+
+export function restartRustProxy(): Promise<{ ok: boolean }> {
+  return requestJson("/__console/api/rust-proxy/restart", { method: "POST" })
 }

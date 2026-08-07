@@ -10,6 +10,7 @@ import {
   toggleProvider,
   updateProvider,
 } from './config';
+import { syncConfigToRust } from './rust-bridge';
 import {
   getConsoleRequest,
   getConsoleUsageStats,
@@ -192,6 +193,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     const payload = await c.req.json().catch(() => ({}));
     try {
       const provider = await createProvider(payload as any);
+      syncConfigToRust().catch(() => {});
       return c.json({ data: provider }, 201);
     } catch (error) {
       return c.json(
@@ -205,6 +207,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     const payload = await c.req.json().catch(() => ({}));
     try {
       const provider = await updateProvider(c.req.param('channelName'), payload as any);
+      syncConfigToRust().catch(() => {});
       return c.json({ data: provider });
     } catch (error) {
       return c.json(
@@ -217,6 +220,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
   v1.delete('/providers/:channelName', async (c) => {
     try {
       await deleteProvider(c.req.param('channelName'));
+      syncConfigToRust().catch(() => {});
       return c.json({ data: { ok: true } });
     } catch (error) {
       return c.json(
@@ -233,6 +237,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     }
     try {
       const provider = await toggleProvider(c.req.param('channelName'), enabled);
+      syncConfigToRust().catch(() => {});
       return c.json({ data: provider });
     } catch (error) {
       return c.json(
@@ -418,6 +423,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     try {
       const alias = await createModelAlias(payload as any);
       await refreshRoutingConfigCache();
+      syncConfigToRust().catch(() => {});
       return c.json({ data: alias }, 201);
     } catch (error) {
       return c.json(
@@ -436,6 +442,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     try {
       const alias = await updateModelAlias(id, payload as any);
       await refreshRoutingConfigCache();
+      syncConfigToRust().catch(() => {});
       return c.json({ data: alias });
     } catch (error) {
       return c.json(
@@ -457,6 +464,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     try {
       const alias = await toggleModelAlias(id, enabled);
       await refreshRoutingConfigCache();
+      syncConfigToRust().catch(() => {});
       return c.json({ data: alias });
     } catch (error) {
       return c.json(
@@ -474,6 +482,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     try {
       await deleteModelAlias(id);
       await refreshRoutingConfigCache();
+      syncConfigToRust().catch(() => {});
       return c.json({ data: { ok: true } });
     } catch (error) {
       return c.json(

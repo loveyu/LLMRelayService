@@ -180,8 +180,12 @@ data/
 
 # Personal test scripts (not for public distribution)
 scripts/
+.local/
 
 .idea
 # Local agent / hook config (not for distribution)
 .claude/
 .github/hooks/
+
+# Rust
+rust-proxy/target/

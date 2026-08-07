@@ -4,6 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LLMRelayService</title>
+    <script>
+      // Apply the saved/system theme before first paint to avoid a flash.
+      (function () {
+        try {
+          var stored = localStorage.getItem("lrs-theme"); // "dark" | "light" | "system"
+          var theme = stored || "system";
+          var prefersDark = window.matchMedia(
+            "(prefers-color-scheme: dark)"
+          ).matches;
+          var resolved = theme === "system" ? (prefersDark ? "dark" : "light") : theme;
+          var root = document.documentElement;
+          root.classList.remove("light", "dark");
+          root.classList.add(resolved);
+          root.style.colorScheme = resolved;
+        } catch (e) {
+          /* keep default light */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

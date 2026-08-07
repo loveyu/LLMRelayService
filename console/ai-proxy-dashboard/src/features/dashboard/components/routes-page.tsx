@@ -1128,10 +1128,10 @@ export function RoutesPage({
     <div className="flex flex-1 flex-col gap-4">
       {/* Tabs + actions */}
       <Tabs value={activeTab} onValueChange={(value) => onTabChange?.(value as RouteTab)} className="flex flex-1 flex-col gap-4">
-        <div className="flex items-center justify-between border-b border-border">
+        <div className="flex items-center justify-between gap-2 border-b border-border">
           <TabsList
             variant="line"
-            className="!h-auto w-auto flex-1 gap-0 justify-start overflow-x-auto border-none bg-transparent px-8 py-0"
+            className="!h-auto w-auto min-w-0 flex-1 gap-0 justify-start overflow-x-auto border-none bg-transparent px-4 py-0 sm:px-8"
           >
             {(
               [
@@ -1153,7 +1153,7 @@ export function RoutesPage({
               </TabsTrigger>
             ))}
           </TabsList>
-          <div className="flex items-center gap-2 pr-4">
+          <div className="flex shrink-0 items-center gap-2 pr-4 sm:pr-8">
             <Button
               type="button"
               variant="outline"
@@ -1324,7 +1324,8 @@ export function RoutesPage({
         </TabsContent>
 
         <TabsContent value="map" className="mt-0 flex-1">
-          <div className="flex items-center gap-2.5 border-b border-border px-5 py-3">
+          <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-border px-5 py-3">
             <MapIcon className="h-4 w-4 text-muted-foreground" />
             <span className="text-[13px] font-semibold">{t("routes.routeMapTitle")}</span>
             <span className="text-[13px] text-muted-foreground">—</span>
@@ -1396,6 +1397,7 @@ export function RoutesPage({
               </TableBody>
             </Table>
           )}
+          </div>
         </TabsContent>
 
         <TabsContent value="aliases" className="mt-0 flex-1">

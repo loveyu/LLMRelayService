@@ -3,6 +3,19 @@ export type ConsoleSession = {
   enabled: boolean
 }
 
+export interface RustProxyStatus {
+  running: boolean
+  pid: number | null
+  startedAt: number
+  uptimeMs: number
+  restartCount: number
+  health: { ok: boolean; at: number; error?: string }
+  host: string
+  port: number
+  bin: string
+  realpath: string | null
+}
+
 export type ConsoleSummary = {
   model?: string
   metadata_user_id?: string

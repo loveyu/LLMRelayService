@@ -12,6 +12,7 @@ export type PageRoute =
   | { page: "logs" }
   | { page: "settings" }
   | { page: "api" }
+  | { page: "system" }
   | { page: "detail"; requestId: string }
 
 function isRouteTab(value: string | null): value is RouteTab {
@@ -35,6 +36,7 @@ function parseHash(): PageRoute {
   }
   if (pageName === "keys") return { page: "keys" }
   if (pageName === "settings") return { page: "settings" }
+  if (pageName === "system") return { page: "system" }
   if (pageName === "api") return { page: "api" }
   if (pageName.startsWith("detail/")) {
     const requestId = decodeURIComponent(pageName.slice("detail/".length))

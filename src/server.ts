@@ -21,6 +21,7 @@ const stubEnv = {
 };
 
 const PORT = parseInt(process.env.PORT || '3300');
+const HOST = process.env.SERVER_HOST || '0.0.0.0';
 const IDLE_TIMEOUT_SECONDS = Number.parseInt(process.env.BUN_SERVER_IDLE_TIMEOUT_SECONDS || '0', 10);
 
 // 初始化 token 估算器（WASM tiktoken 一次性初始化）
@@ -132,6 +133,7 @@ async function resetDatabase(): Promise<{ success: boolean; message?: string; er
 }
 
 Bun.serve({
+  hostname: HOST,
   port: PORT,
   idleTimeout: Number.isFinite(IDLE_TIMEOUT_SECONDS) && IDLE_TIMEOUT_SECONDS >= 0 ? IDLE_TIMEOUT_SECONDS : 0,
   fetch: async (req) => {
@@ -173,9 +175,96 @@ Bun.serve({
   },
 });
 
-console.log(`LLM Gateway running on :${PORT} (idleTimeout=${Number.isFinite(IDLE_TIMEOUT_SECONDS) && IDLE_TIMEOUT_SECONDS >= 0 ? IDLE_TIMEOUT_SECONDS : 0}s)`);
+console.log(`LLM Gateway running on ${HOST}:${PORT} (idleTimeout=${Number.isFinite(IDLE_TIMEOUT_SECONDS) && IDLE_TIMEOUT_SECONDS >= 0 ? IDLE_TIMEOUT_SECONDS : 0}s)`);
 
 startPerfMonitor();
+
+// Start Rust proxy as child process. TS manages its lifecycle:
+// auto-restart on crash, health check, status/restart via console API.
+import('./rust-process').then(({ startRustProxy: startRust, stopRustProxy }) => {
+  startRust();
+
+  // Start IPC bridge immediately — handles ENOENT/ECONNREFUSED with auto-retry
+  import('./rust-bridge').then(({ startRustBridge }) => {
+    startRustBridge();
+  }).catch(() => {});
+
+  // Set up IPC message handler for log forwarding from Rust
+  import('./rust-bridge').then(({ setMessageHandler }) => {
+    setMessageHandler((msg) => {
+      switch (msg.type) {
+        case 'request_log':
+          import('./console-store').then(({ saveConsoleRequest }) => {
+            saveConsoleRequest({
+              request_id: msg.requestId,
+              created_at: msg.createdAt,
+              route_prefix: msg.routePrefix,
+              upstream_type: msg.upstreamType as any,
+              method: msg.method,
+              path: msg.path,
+              target_url: msg.targetUrl,
+              request_model: msg.requestModel,
+              original_payload: msg.originalPayload ?? null,
+              original_payload_truncated: false,
+              original_summary: null,
+              forwarded_payload: msg.forwardedPayload ?? null,
+              forwarded_payload_truncated: false,
+              forwarded_summary: null,
+              original_headers: msg.originalHeaders ?? {},
+              forward_headers: msg.forwardHeaders ?? {},
+              api_key_id: msg.apiKeyId ?? null,
+              api_key_name: msg.apiKeyName ?? null,
+              failover_from: null,
+              failover_chain: [],
+              failover_reason: null,
+              original_route_prefix: null,
+              original_request_model: null,
+              retry_attempt: 0,
+              source_request_type: 'chat_completion',
+            } as any).catch((err: any) =>
+              console.warn('[rust-bridge] Failed to save request log:', err?.message ?? err),
+            );
+          }).catch(() => {});
+          break;
+        case 'response_log':
+          import('./console-store').then(({ saveConsoleResponse }) => {
+            saveConsoleResponse({
+              request_id: msg.requestId,
+              response_status: msg.responseStatus,
+              response_status_text: msg.responseStatusText,
+              response_headers: msg.responseHeaders,
+              response_body_bytes: msg.responseBodyBytes,
+              first_chunk_at: msg.firstChunkAt ?? undefined,
+              first_token_at: msg.firstTokenAt ?? undefined,
+              completed_at: msg.completedAt ?? undefined,
+              has_streaming_content: msg.hasStreamingContent,
+              response_model: msg.responseModel ?? undefined,
+              stop_reason: msg.stopReason ?? undefined,
+              response_usage: {
+                model: msg.responseModel ?? '',
+                input_tokens: msg.inputTokens ?? 0,
+                output_tokens: msg.outputTokens ?? 0,
+                total_tokens: msg.totalTokens ?? 0,
+              },
+            } as any).catch((err: any) =>
+              console.warn('[rust-bridge] Failed to save response log:', err?.message ?? err),
+            );
+          }).catch(() => {});
+          break;
+      }
+    });
+  }).catch(() => {});
+
+  // Graceful shutdown: stop Rust when TS exits
+  const doCleanup = () => {
+    stopRustProxy().catch(() => {});
+    process.exit(0);
+  };
+  process.on('SIGTERM', doCleanup);
+  process.on('SIGINT', doCleanup);
+}).catch((err) => {
+  console.warn('[rust-proc] Failed to start:', err instanceof Error ? err.message : err);
+});
 
 // 每 24h 自动同步开启了「自动同步上游模型」的渠道模型列表
 const AUTO_MODEL_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;

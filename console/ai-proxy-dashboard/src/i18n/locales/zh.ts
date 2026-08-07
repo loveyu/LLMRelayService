@@ -54,6 +54,7 @@ export default {
 
   // ── Nav bar ──
   nav: {
+    menu: "菜单",
     monitor: "监控",
     usage: "用量",
     providers: "渠道",

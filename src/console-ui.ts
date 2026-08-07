@@ -4,10 +4,12 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { existsSync, statSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { createProvider, deleteProvider, ensureProviderConfigsLoaded, getProviderInfo, getProviders, refreshRoutingConfigCache, resolveRoute, toggleProvider, updateProvider } from './config';
+import { syncConfigToRust } from './rust-bridge';
 import { getConsoleRequest, listConsoleRequests, getProviderHealthStatuses, getConsoleUsageStats, getConsoleFilterOptions, getMaxDebugRecords, type RequestSortKey, type SortDirection } from './console-store';
 import { createManagedApiKey, deleteManagedApiKey, getManagedApiKey, listManagedApiKeys, renameManagedApiKey, setApiKeyAllowedModels, setApiKeyCostQuota } from './api-keys';
 import { parseApiKeyCostQuotaLimit } from './api-key-quota';
 import { createModelAlias, deleteModelAlias, listModelAliases, toggleModelAlias, updateModelAlias } from './console-model-alias-store';
+import { getStatus as getRustStatus, restartRustProxy } from './rust-process';
 import {
   listChannelModelsWithMetadata,
   listUpstreamModelsForChannel,
@@ -570,6 +572,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
 
     try {
       const provider = await createProvider(payload as any);
+      syncConfigToRust().catch(() => {});
       return c.json(provider, 201);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, resolveProviderMutationStatus(error));
@@ -588,6 +591,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
 
     try {
       const provider = await updateProvider(c.req.param('channelName'), payload as any);
+      syncConfigToRust().catch(() => {});
       return c.json(provider);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, resolveProviderMutationStatus(error));
@@ -604,6 +608,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
 
     try {
       await deleteProvider(c.req.param('channelName'));
+      syncConfigToRust().catch(() => {});
       return c.json({ ok: true });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, resolveProviderMutationStatus(error));
@@ -625,6 +630,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
 
     try {
       const provider = await toggleProvider(c.req.param('channelName'), enabled);
+      syncConfigToRust().catch(() => {});
       return c.json(provider);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, resolveProviderMutationStatus(error));
@@ -821,6 +827,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
     try {
       const alias = await createModelAlias(payload as any);
       await refreshRoutingConfigCache();
+      syncConfigToRust().catch(() => {});
       return c.json(alias, 201);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
@@ -836,6 +843,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
     try {
       const alias = await updateModelAlias(id, payload as any);
       await refreshRoutingConfigCache();
+      syncConfigToRust().catch(() => {});
       return c.json(alias);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
@@ -850,8 +858,9 @@ export function registerConsoleRoutes(app: Hono<any>): void {
     const { enabled } = await c.req.json().catch(() => ({}));
     if (typeof enabled !== 'boolean') return c.json({ error: 'enabled 必须是布尔值' }, 400);
     try {
-      const alias = await toggleModelAlias(id, enabled);
+      const alias =       await toggleModelAlias(id, enabled);
       await refreshRoutingConfigCache();
+      syncConfigToRust().catch(() => {});
       return c.json(alias);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
@@ -866,10 +875,29 @@ export function registerConsoleRoutes(app: Hono<any>): void {
     try {
       await deleteModelAlias(id);
       await refreshRoutingConfigCache();
+      syncConfigToRust().catch(() => {});
       return c.json({ ok: true });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
     }
+  });
+
+  // ── Rust Proxy 管理 ──────────────────────────────────────────────────────
+
+  app.get('/__console/api/rust-proxy/status', (c) => {
+    if (!isPasswordConfigured()) return c.json({ error: 'GATEWAY_API_KEY 未设置' }, 503);
+    if (!isAuthenticated(c)) return c.json({ error: '未授权' }, 401);
+    return c.json(getRustStatus());
+  });
+
+  app.post('/__console/api/rust-proxy/restart', async (c) => {
+    if (!isPasswordConfigured()) return c.json({ error: 'GATEWAY_API_KEY 未设置' }, 503);
+    if (!isAuthenticated(c)) return c.json({ error: '未授权' }, 401);
+    const result = await restartRustProxy();
+    if (result.ok) {
+      return c.json({ ok: true });
+    }
+    return c.json({ error: result.error }, 500);
   });
 
   app.use('*', maybeServeFrontend);

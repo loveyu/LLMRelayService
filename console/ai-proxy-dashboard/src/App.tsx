@@ -10,6 +10,7 @@ import { NavBar } from "@/features/dashboard/components/nav-bar"
 import { ProvidersPage } from "@/features/dashboard/components/providers-page"
 import { ModelsPage } from "@/features/dashboard/components/models-page"
 import { RoutesPage } from "@/features/dashboard/components/routes-page"
+import { RustProxyPage } from "@/features/dashboard/components/rust-proxy-page"
 import { SettingsPage } from "@/features/dashboard/components/settings-page"
 import { UsagePage } from "@/features/dashboard/components/usage-page"
 import {
@@ -127,6 +128,12 @@ export function App() {
       case "settings":
         return (
           <SettingsPage
+            onUnauthorized={handleUnauthorized}
+          />
+        )
+      case "system":
+        return (
+          <RustProxyPage
             onUnauthorized={handleUnauthorized}
           />
         )
