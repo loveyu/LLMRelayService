@@ -14,6 +14,8 @@ export interface RustProxyStatus {
   port: number
   bin: string
   realpath: string | null
+  ipcSocket: string
+  bridgeConnected: boolean
 }
 
 export type ConsoleSummary = {

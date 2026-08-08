@@ -138,6 +138,12 @@ export function RustProxyPage({
                 <Stat label="已运行" value={formatUptime(status.uptimeMs)} valueMono />
                 <Stat label="重启次数" value={String(status.restartCount)} valueMono />
                 <Stat label="监听地址" value={`${status.host}:${status.port}`} valueMono />
+                <Stat label="IPC Socket" value={status.ipcSocket} valueMono />
+                <Stat
+                  label="IPC 连接"
+                  value={status.bridgeConnected ? "已连接" : "未连接"}
+                  valueClassName={status.bridgeConnected ? "text-[var(--lrs-success)]" : "text-[var(--lrs-danger)]"}
+                />
                 <Stat label="启动时间" value={formatDate(status.startedAt)} valueMono />
                 <Stat
                   label="最大重启"
@@ -219,15 +225,17 @@ function Stat({
   label,
   value,
   valueMono,
+  valueClassName,
 }: {
   label: string
   value: string
   valueMono?: boolean
+  valueClassName?: string
 }) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</span>
-      <span className={valueMono ? "text-sm font-mono font-medium" : "text-sm font-medium"}>{value}</span>
+      <span className={`${valueMono ? "font-mono" : ""} text-sm font-medium ${valueClassName ?? ""}`}>{value}</span>
     </div>
   )
 }

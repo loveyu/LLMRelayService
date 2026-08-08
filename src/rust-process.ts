@@ -7,6 +7,7 @@
  */
 
 import { spawn, type Subprocess } from 'bun';
+import { isBridgeConnected } from './rust-bridge';
 
 const RUST_HOST = process.env.RUST_PROXY_HOST || '127.0.0.1';
 const RUST_PORT = parseInt(process.env.RUST_PROXY_PORT || '3301', 10);
@@ -14,6 +15,7 @@ const RUST_HEALTH_URL = `http://${RUST_HOST}:${RUST_PORT}/health`;
 const MAX_RESTARTS = 5;
 const RESTART_DELAY_MS = 3000;
 const HEALTH_CHECK_INTERVAL_MS = 15000;
+const IPC_SOCKET = process.env.LRS_IPC_SOCKET || '/tmp/lrs-ipc.sock';
 
 let _proc: Subprocess | null = null;
 let _startedAt: number = 0;
@@ -38,6 +40,10 @@ export interface RustProxyStatus {
     port: number;
     bin: string;
     realpath: string | null;
+    /** IPC Unix socket 路径（rust-proxy ←→ TS bridge 通信通道）。 */
+    ipcSocket: string;
+    /** TS bridge 是否已连上 rust-proxy 的 IPC socket（未连上则配置/日志无法同步）。 */
+    bridgeConnected: boolean;
 }
 
 export function getStatus(): RustProxyStatus {
@@ -57,6 +63,8 @@ export function getStatus(): RustProxyStatus {
         port: RUST_PORT,
         bin,
         realpath,
+        ipcSocket: IPC_SOCKET,
+        bridgeConnected: isBridgeConnected(),
     };
 }
 
