@@ -440,6 +440,70 @@ function PresetChannelPicker({
   )
 }
 
+// Shared "add a model" control used by both the edit pane and the create dialog.
+// Key fix: the value typed here is committed on Enter *and* on the explicit Add
+// button — the old edit-pane code called addModelRow() which pushed an empty
+// row and silently discarded the typed name, so models could never be added.
+// The visible Add button also makes it usable on mobile, where relying on the
+// soft keyboard's Enter key is not discoverable.
+function ModelAddControl({
+  addLabel,
+  syncLabel,
+  modelPlaceholder,
+  syncDisabled,
+  onAdd,
+  onSync,
+}: {
+  addLabel: string
+  syncLabel: string
+  modelPlaceholder: string
+  syncDisabled: boolean
+  onAdd: (model: string) => void
+  onSync: () => void
+}) {
+  const [value, setValue] = useState("")
+  const commit = () => {
+    const trimmed = value.trim()
+    if (!trimmed) return
+    onAdd(trimmed)
+    setValue("")
+  }
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <div className="flex min-w-[12rem] flex-1 items-center gap-1">
+        <input
+          className="h-9 min-w-0 flex-1 rounded-lg border border-dashed border-[#cdd9d9] bg-transparent px-3 text-xs text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-ring focus:ring-0"
+          placeholder={modelPlaceholder}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          enterKeyHint="done"
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault()
+              commit()
+            }
+          }}
+        />
+        <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={commit}>
+          <Plus data-icon="inline-start" />
+          {addLabel}
+        </Button>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-9"
+        onClick={onSync}
+        disabled={syncDisabled}
+      >
+        <Download data-icon="inline-start" />
+        {syncLabel}
+      </Button>
+    </div>
+  )
+}
+
 export function ProvidersPage({
   onUnauthorized,
 }: {
@@ -648,10 +712,12 @@ export function ProvidersPage({
     }
   }
 
-  function addModelRow() {
+  function addModel(model: string) {
+    const trimmed = model.trim()
+    if (!trimmed) return
     setFormState((current) => ({
       ...current,
-      models: [...current.models, createModelRow()],
+      models: [...current.models, createModelRow({ model: trimmed })],
     }))
   }
 
@@ -833,19 +899,19 @@ export function ProvidersPage({
       )
     }
     return (
-      <form className="flex flex-col" onSubmit={handleSubmit}>
-        <div className="flex items-center gap-2.5 border-b border-border px-6 py-4">
+      <form className="flex h-full flex-col" onSubmit={handleSubmit}>
+        <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-border px-5 py-3 sm:px-6 sm:py-4">
           <span className="text-[15px] font-extrabold">
             {t("providers.editChannel")}
           </span>
-          <span className="font-mono text-[11px] text-muted-foreground">{activeProvider?.channelName}</span>
+          <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{activeProvider?.channelName}</span>
           {activeProvider ? (
-            <>
+            <div className="ml-auto flex items-center gap-2">
               {/* 启用状态是最常用的开关，放在标题栏最显眼的位置，改动即时生效。 */}
               <button
                 type="button"
                 className={cn(
-                  "ml-auto flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12.5px] font-semibold transition-colors disabled:opacity-50",
+                  "flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12.5px] font-semibold transition-colors disabled:opacity-50",
                   activeProvider.enabled
                     ? "border-lrs-success/40 bg-lrs-success-bg text-lrs-success"
                     : "border-border bg-muted text-muted-foreground",
@@ -869,15 +935,15 @@ export function ProvidersPage({
               </button>
               <button
                 type="button"
-                className="text-[11.5px] font-semibold text-destructive"
+                className="rounded p-1 text-[11.5px] font-semibold text-destructive hover:bg-destructive/10"
                 onClick={() => openDeleteDialog(activeProvider)}
               >
                 {t("common.delete")}
               </button>
-            </>
+            </div>
           ) : null}
         </div>
-        <div className="flex flex-col gap-5 px-6 py-5">
+        <div className="flex flex-1 flex-col gap-5 overflow-y-auto px-5 py-4 sm:px-6 sm:py-5">
           {formError ? (
             <Alert variant="destructive">
               <AlertTitle>{t("common.saveFailed")}</AlertTitle>
@@ -966,7 +1032,7 @@ export function ProvidersPage({
                 <button
                   type="button"
                   tabIndex={-1}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   onClick={() => setShowApiKey((v) => !v)}
                   aria-label={showApiKey ? t("providers.hideApiKey") : t("providers.showApiKey")}
                 >
@@ -987,7 +1053,7 @@ export function ProvidersPage({
             {/* Models as chips */}
             <Field>
               <FieldLabel>{t("providers.modelsLabel")}</FieldLabel>
-              <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex flex-wrap gap-1.5 empty:hidden">
                 {formState.models.filter((r) => r.model.trim() !== "").map((row) => (
                   <span
                     key={row.id}
@@ -996,7 +1062,7 @@ export function ProvidersPage({
                     {row.model}
                     <button
                       type="button"
-                      className="text-[#0c7c86]/60 transition-colors hover:text-destructive"
+                      className="-mr-1 rounded p-1 text-[#0c7c86]/60 transition-colors hover:bg-[#0c7c86]/10 hover:text-destructive"
                       onClick={() => removeModelRow(row.id)}
                       aria-label={t("providers.removeModel")}
                     >
@@ -1004,31 +1070,15 @@ export function ProvidersPage({
                     </button>
                   </span>
                 ))}
-                <div className="flex items-center gap-1">
-                  <input
-                    className="w-28 rounded-lg border border-dashed border-[#cdd9d9] bg-transparent px-2.5 py-1 text-xs text-muted-foreground outline-none placeholder:text-muted-foreground/50 focus:ring-0"
-                    placeholder={t("providers.addButton")}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        const target = event.target as HTMLInputElement;
-                        if (target.value.trim()) {
-                          addModelRow();
-                          target.value = "";
-                        }
-                      }
-                    }}
-                  />
-                  <Button type="button" variant="ghost" size="sm" onClick={addModelRow}>
-                    <Plus data-icon="inline-start" />
-                    {t("providers.addButton")}
-                  </Button>
-                </div>
-                <Button type="button" variant="ghost" size="sm" onClick={() => void openSyncDialog()} disabled={!formState.targetBaseUrl.trim()}>
-                  <Download data-icon="inline-start" />
-                  {t("providers.syncButton")}
-                </Button>
               </div>
+              <ModelAddControl
+                addLabel={t("providers.addButton")}
+                syncLabel={t("providers.syncButton")}
+                modelPlaceholder={t("providers.modelInputPlaceholder")}
+                syncDisabled={!formState.targetBaseUrl.trim()}
+                onAdd={addModel}
+                onSync={() => void openSyncDialog()}
+              />
               <div className="mt-2 flex items-start gap-2 rounded-[10px] border border-input bg-muted/30 px-3 py-2">
                 <Checkbox
                   id="pane-auto-sync-models"
@@ -1125,13 +1175,14 @@ export function ProvidersPage({
               <FieldDescription>{t("providers.extraFieldsHint")}</FieldDescription>
             </Field>
           </FieldGroup>
+        </div>
 
-          {/* Bottom: save */}
-          <div className="flex items-center justify-end border-t border-border pt-4">
-            <Button type="submit" size="sm" disabled={submitPending}>
-              {submitPending ? t("common.saving") : t("common.save")}
-            </Button>
-          </div>
+        {/* Sticky save footer — kept visible on mobile so the primary action is
+            always reachable without scrolling the bottom sheet. */}
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 py-3 sm:px-6 sm:py-4">
+          <Button type="submit" size="sm" disabled={submitPending}>
+            {submitPending ? t("common.saving") : t("common.save")}
+          </Button>
         </div>
       </form>
     )
@@ -1162,7 +1213,7 @@ export function ProvidersPage({
           <div className="grid min-h-[calc(100vh-9rem)] flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[1fr_1.05fr]">
             {/* Channel list */}
             <div className="flex min-h-0 flex-col border-b border-border lg:border-b-0 lg:border-r">
-              <div className="flex items-center justify-between gap-2 border-b border-border px-5 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5 sm:px-5 sm:py-3">
                 <span className="text-[13px] text-muted-foreground">
                   共 <b className="font-mono font-semibold text-foreground">{displayedProviders.length}</b> 个渠道 · {providerStats.enabledCount} {t("common.enabled")}
                 </span>
@@ -1189,8 +1240,8 @@ export function ProvidersPage({
                   </Button>
                 </div>
               </div>
-              <div className="flex items-center gap-2 border-b border-border px-5 py-2.5">
-                <div className="relative min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5 sm:px-5">
+                <div className="relative min-w-0 basis-[10rem] flex-1">
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     value={searchQuery}
@@ -1283,7 +1334,7 @@ export function ProvidersPage({
               </div>
             </div>
             {/* Edit pane — desktop only */}
-            <div className="hidden min-h-0 flex-col overflow-auto lg:flex">{renderEditPane()}</div>
+            <div className="hidden min-h-0 flex-col lg:flex">{renderEditPane()}</div>
           </div>
         )}
 
@@ -1298,7 +1349,7 @@ export function ProvidersPage({
           <div className="flex shrink-0 justify-center pb-1 pt-2.5">
             <span className="h-1.5 w-10 rounded-full bg-border" />
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1">
             {renderEditPane()}
           </div>
         </SheetContent>
@@ -1308,7 +1359,7 @@ export function ProvidersPage({
       {/* 新增渠道弹窗 — Design: LRS Clear 风格五 */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[600px]">
-          <DialogHeader className="flex-row items-center gap-3 space-y-0 border-b border-border px-7 py-5">
+          <DialogHeader className="flex-row items-center gap-3 space-y-0 border-b border-border px-5 py-4 sm:px-7 sm:py-5">
             <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-[17px] font-bold text-primary">
               +
             </span>
@@ -1321,7 +1372,7 @@ export function ProvidersPage({
           </DialogHeader>
 
           <form className="flex flex-col" onSubmit={handleSubmit}>
-            <div className="flex max-h-[70vh] flex-col gap-[18px] overflow-y-auto px-7 py-6">
+            <div className="flex max-h-[70vh] flex-col gap-[18px] overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
               {formError ? (
                 <Alert variant="destructive">
                   <AlertTitle>{t("common.saveFailed")}</AlertTitle>
@@ -1417,7 +1468,7 @@ export function ProvidersPage({
                   <button
                     type="button"
                     tabIndex={-1}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     onClick={() => setShowApiKey((v) => !v)}
                     aria-label={showApiKey ? t("providers.hideApiKey") : t("providers.showApiKey")}
                   >
@@ -1437,7 +1488,7 @@ export function ProvidersPage({
                       {row.model}
                       <button
                         type="button"
-                        className="text-[#0c7c86]/60 transition-colors hover:text-destructive"
+                        className="-mr-1 rounded p-1 text-[#0c7c86]/60 transition-colors hover:bg-[#0c7c86]/10 hover:text-destructive"
                         onClick={() => removeModelRow(row.id)}
                         aria-label={t("providers.removeModel")}
                       >
@@ -1450,27 +1501,15 @@ export function ProvidersPage({
                       {t("providers.createModelsHint")}
                     </span>
                   ) : null}
-                  <div className="flex items-center gap-1">
-                    <input
-                      className="w-28 rounded-lg border border-dashed border-[#cdd9d9] bg-transparent px-2.5 py-1 text-xs text-muted-foreground outline-none placeholder:text-muted-foreground/50 focus:ring-0"
-                      placeholder={t("providers.addButton")}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault()
-                          const target = event.target as HTMLInputElement
-                          if (target.value.trim()) {
-                            setFormState((current) => ({ ...current, models: [...current.models, createModelRow({ model: target.value.trim() } as ProviderModelInfo)] }))
-                            target.value = ""
-                          }
-                        }
-                      }}
-                    />
-                    <Button type="button" variant="ghost" size="sm" onClick={() => void openSyncDialog()} disabled={!formState.targetBaseUrl.trim()}>
-                      <Download data-icon="inline-start" />
-                      {t("providers.syncButton")}
-                    </Button>
-                  </div>
                 </div>
+                <ModelAddControl
+                  addLabel={t("providers.addButton")}
+                  syncLabel={t("providers.syncButton")}
+                  modelPlaceholder={t("providers.modelInputPlaceholder")}
+                  syncDisabled={!formState.targetBaseUrl.trim()}
+                  onAdd={addModel}
+                  onSync={() => void openSyncDialog()}
+                />
               </Field>
 
               {formState.type === "openai" ? (
@@ -1505,7 +1544,7 @@ export function ProvidersPage({
               </div>
             </div>
 
-            <DialogFooter className="border-t border-border px-7 py-4">
+            <DialogFooter className="border-t border-border px-5 py-3 sm:px-7 sm:py-4">
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
                 {t("common.cancel")}
               </Button>

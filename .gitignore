@@ -183,8 +183,12 @@ scripts/
 .local/
 
 .idea
-# Local agent / hook config (not for distribution)
-.claude/
+# Local agent / hook config (not for distribution).
+# Keep .claude/ contents local, but share the skills symlink so multi-agent
+# clients (Claude Code reads .claude/skills, others read .agents/skills) resolve
+# to the same source of truth maintained under .agents/skills.
+.claude/*
+!.claude/skills
 .github/hooks/
 
 # Rust

@@ -549,6 +549,7 @@ export default {
     routingVisibilityExplicitOnly: "仅显式",
     syncButton: "同步",
     addButton: "添加",
+    modelInputPlaceholder: "输入模型名，回车或点添加",
     removeModel: "移除",
     selectAuthMethod: "选择认证方式",
     cancel: "取消",

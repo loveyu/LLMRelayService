@@ -549,6 +549,7 @@ export default {
     routingVisibilityExplicitOnly: "Explicit Only",
     syncButton: "Sync",
     addButton: "Add",
+    modelInputPlaceholder: "Type a model, press Enter or tap Add",
     removeModel: "Remove",
     selectAuthMethod: "Select auth method",
     cancel: "Cancel",
