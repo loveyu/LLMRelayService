@@ -17,6 +17,9 @@
 - 做完前端改动后，至少运行：
   - `cd console/ai-proxy-dashboard && bun run typecheck`
   - `cd console/ai-proxy-dashboard && bun run build`
+- 做完后端（`src/`）改动后，至少运行：
+  - `bun run lint`（eslint src，抓 tsc 漏报的「类型层合法但运行时未 import」符号 —— 如 drizzle 的 `ne` 被 d.ts 全局化后 tsc 不报、但运行时 `ReferenceError`，曾导致 `/#/providers` 500）
+  - `npx tsc --noEmit`（确认无新增类型错误；根 tsc 历史有几条 pre-existing 噪音，只关注自己改的文件）
 - **push 前必须先启动本地 dev 环境验证无报错**：`scripts/dev-tmux.sh`（tmux 编排 vite + 后端 + rust-proxy），用 `scripts/dev-tmux.sh status` 与 `curl -s 127.0.0.1:3311/health`（看 `config_synced:true`）确认健康后再 push。详见下方「Dev 环境（tmux 编排）」。
 - **数据库迁移：只用 drizzle-kit，禁用 inline migrations。**
   - 改 schema 后必须运行 `drizzle-kit generate` 生成迁移文件

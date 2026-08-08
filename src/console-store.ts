@@ -6,7 +6,7 @@ import { getDatabaseUrl, getDbDriver } from './db/config';
 import { isTrustedTestDatabaseUrl } from './db/test-database';
 
 import { consoleRequests, consoleApiKeys } from './db/schema';
-import { eq, desc, asc, and, or, sql, count, gte, isNotNull, isNull, like, notInArray, type SQL } from 'drizzle-orm';
+import { eq, ne, desc, asc, and, or, sql, count, gte, isNotNull, isNull, like, notInArray, type SQL } from 'drizzle-orm';
 import { elapsedPerfMs, getMaxPerfPhase, nowPerfMs, shouldLogBackgroundPerf } from './perf-detail';
 import { recordBackgroundPerfSample } from './perf-monitor';
 import { getModelOverrideKey, listModelMetadataOverrides, type ModelMetadataOverride } from './model-metadata-overrides';
