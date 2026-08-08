@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
+import { copyText } from "@/lib/clipboard"
 import {
   Copy,
   Download,
@@ -1849,10 +1850,9 @@ export function ProvidersPage({
               <Button
                 type="button"
                 onClick={() => {
-                  navigator.clipboard
-                    .writeText(configJson)
-                    .then(() => toast.success(t("common.copied")))
-                    .catch(() => toast.error(t("common.copyFailed")))
+                  copyText(configJson).then((ok) =>
+                    ok ? toast.success(t("common.copied")) : toast.error(t("common.copyFailed")),
+                  )
                 }}
               >
                 <Copy data-icon="inline-start" />

@@ -3,6 +3,7 @@ import { BarChart3, Copy, Filter, Gauge, KeyRound, Pencil, Plus, Trash2, X } fro
 import { useTranslation } from "react-i18next"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { copyText } from "@/lib/clipboard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -31,15 +32,6 @@ import { formatCost } from "@/features/dashboard/utils"
 function formatDateTime(timestamp: number | null) {
   if (!timestamp) return "--"
   return new Date(timestamp).toLocaleString("zh-CN", { hour12: false })
-}
-
-async function copyText(value: string) {
-  try {
-    await navigator.clipboard.writeText(value)
-    return true
-  } catch {
-    return false
-  }
 }
 
 export function KeysPage({

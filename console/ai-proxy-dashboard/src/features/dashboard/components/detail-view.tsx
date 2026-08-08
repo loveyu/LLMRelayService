@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
+import { copyText } from "@/lib/clipboard"
 import { DetailMetricTable } from "@/features/dashboard/components/detail-metric-table"
 import { PayloadPanel } from "@/features/dashboard/components/payload-panel"
 import type { ConsoleRequestDetail } from "@/features/dashboard/types"
@@ -377,10 +378,9 @@ export function DetailView({
             type="button"
             className="text-[11.5px] font-semibold text-primary hover:underline"
             onClick={() => {
-              navigator.clipboard
-                ?.writeText(JSON.stringify(record, null, 2))
-                .then(() => toast.success(t("common.copied")))
-                .catch(() => toast.error(t("common.copyFailed")))
+              copyText(JSON.stringify(record, null, 2)).then((ok) =>
+                ok ? toast.success(t("common.copied")) : toast.error(t("common.copyFailed")),
+              )
             }}
           >
             {t("detail.copy")}

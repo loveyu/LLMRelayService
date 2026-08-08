@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/table"
 import { toast } from "@/components/ui/toast"
 import { useIsMobile } from "@/hooks/use-is-mobile"
+import { copyText } from "@/lib/clipboard"
 import { fetchModels, testProvider, updateModelMetadata } from "@/features/dashboard/api"
 import type { ConsoleModelPricing, GatewayModel, TestProviderResult } from "@/features/dashboard/types"
 
@@ -481,12 +482,9 @@ export function ModelsPage({
   async function handleCopyResult() {
     if (!testDialogResult) return
     const summary = buildTestSummary(testDialogResult, testDialogModel, t)
-    try {
-      await navigator.clipboard.writeText(summary)
-      toast.success(t("common.copied"))
-    } catch {
-      toast.error(t("common.copyFailed"))
-    }
+    const ok = await copyText(summary)
+    if (ok) toast.success(t("common.copied"))
+    else toast.error(t("common.copyFailed"))
   }
 
   const openEditDialog = (model: GatewayModel) => {
