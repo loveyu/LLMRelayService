@@ -207,11 +207,11 @@ export function NavBar({
           <Settings className="h-[15px] w-[15px]" />
         </button>
 
-        {/* Layout width toggle */}
+        {/* Layout width toggle — 移动端默认即全宽，无需此按钮 */}
         <button
           type="button"
           onClick={toggleFullWidth}
-          className={iconBtn}
+          className={cn(iconBtn, "max-md:hidden")}
           title={fullWidth ? t("nav.layoutConstrained") : t("nav.layoutFullWidth")}
           aria-label={fullWidth ? t("nav.layoutConstrained") : t("nav.layoutFullWidth")}
         >
