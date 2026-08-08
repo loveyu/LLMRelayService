@@ -3,6 +3,7 @@ mod auth;
 mod config;
 mod failover;
 mod ipc;
+mod provider_test;
 mod proxy;
 mod responses;
 mod routing;
@@ -11,7 +12,10 @@ mod transform;
 
 use crate::app_state::{AppState, RoutingTable};
 use crate::config::SyncConfigPayload;
-use axum::{Json, Router, routing::get};
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -42,6 +46,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/v1/models", get(models_handler))
         .route("/openai/v1/models", get(models_handler))
         .route("/anthropic/v1/models", get(models_handler))
+        // 渠道连通性测试：本机 TS 控制台/OpenAPI 经此走 Rust 测试上游，TS 旧实现逐步废弃。
+        .route("/admin/providers/{channel_name}/test", post(provider_test::test_provider_handler))
         .fallback(proxy::proxy_handler)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(10 * 1024 * 1024))
         .layer(cors)
