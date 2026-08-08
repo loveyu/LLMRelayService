@@ -142,6 +142,17 @@ pub async fn proxy_handler(
     loop {
         if attempt_index >= active_routes.len() {
             warn!("All routes exhausted for {}", pathname);
+            emit_terminal_response_log(
+                &state,
+                &request_id,
+                created_at,
+                502,
+                "BAD_GATEWAY",
+                serde_json::json!({}),
+                Some(format!("所有上游路由均已失败: {pathname}")),
+                0,
+                None,
+            );
             return Err(StatusCode::BAD_GATEWAY);
         }
 
@@ -408,9 +419,35 @@ pub async fn proxy_handler(
                     }
                 }
 
-                return build_response(upstream_resp, &route, false, "", 0, created_at)
-                    .await
-                    .map(|r| r.response);
+                // 上游非 2xx 且无可用 failover：透传错误响应给客户端前，先补发响应日志，
+                // 否则日志页只能看到请求发起、看不到结束时间与上游错误体。
+                let err_headers = serde_json::to_value(
+                    upstream_resp
+                        .headers()
+                        .iter()
+                        .map(|(k, v)| {
+                            (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                        })
+                        .collect::<std::collections::HashMap<_, _>>(),
+                )
+                .unwrap_or_default();
+                return match build_response(upstream_resp, &route, false, "", 0, created_at).await {
+                    Ok(rw) => {
+                        emit_terminal_response_log(
+                            &state,
+                            &request_id,
+                            created_at,
+                            status,
+                            "ERROR",
+                            err_headers,
+                            rw.body_content.clone(),
+                            rw.body_bytes,
+                            route.resolved_model.clone(),
+                        );
+                        Ok(rw.response)
+                    }
+                    Err(s) => Err(s),
+                };
             }
             Ok(Err(e)) => {
                 let is_timeout = e.is_timeout();
@@ -449,6 +486,17 @@ pub async fn proxy_handler(
                 }
 
                 warn!("Upstream error: {e}");
+                emit_terminal_response_log(
+                    &state,
+                    &request_id,
+                    created_at,
+                    502,
+                    "BAD_GATEWAY",
+                    serde_json::json!({}),
+                    Some(format!("连接上游失败: {e}")),
+                    0,
+                    None,
+                );
                 return Err(StatusCode::BAD_GATEWAY);
             }
             Err(_) => {
@@ -480,6 +528,17 @@ pub async fn proxy_handler(
                     }
                 }
                 warn!("Upstream timeout");
+                emit_terminal_response_log(
+                    &state,
+                    &request_id,
+                    created_at,
+                    504,
+                    "GATEWAY_TIMEOUT",
+                    serde_json::json!({}),
+                    Some("上游响应超时".to_string()),
+                    0,
+                    None,
+                );
                 return Err(StatusCode::GATEWAY_TIMEOUT);
             }
         }
@@ -1027,6 +1086,56 @@ fn send_request_log(
             api_key_id,
             api_key_name,
             source_request_type: "chat_completion".to_string(),
+        });
+    });
+}
+
+/// 终态响应日志（错误路径补发）：上游非 2xx / 网络错误 / 超时 / 路由耗尽时调用，
+/// 与成功路径的 ResponseLog 同构，保证日志页能看到结束时间、状态码与（如有）上游
+/// 错误体，便于排查 400/409/429 等失败请求。成功路径仍走内联的精细 timing 发送。
+#[allow(clippy::too_many_arguments)]
+fn emit_terminal_response_log(
+    state: &AppState,
+    request_id: &str,
+    created_at: u64,
+    status: u16,
+    status_text: &str,
+    response_headers: serde_json::Value,
+    body_content: Option<String>,
+    body_bytes: u64,
+    response_model: Option<String>,
+) {
+    let usage = body_content.as_deref().and_then(|b| {
+        serde_json::from_str::<serde_json::Value>(b).ok().and_then(|v| v.get("usage").cloned())
+    });
+    let (input_tokens, output_tokens, total_tokens) = extract_token_counts(&usage);
+    let cache = extract_cache_tokens(&usage);
+    let stop_reason = body_content.as_deref().and_then(extract_stop_reason);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+
+    let ipc = state.ipc.clone();
+    let rid = request_id.to_string();
+    let stext = status_text.to_string();
+    tokio::spawn(async move {
+        ipc.send(RustToTsMessage::ResponseLog {
+            request_id: rid,
+            response_status: status,
+            response_status_text: stext,
+            response_headers,
+            response_body_bytes: body_bytes,
+            first_chunk_at: Some(created_at),
+            first_token_at: Some(created_at),
+            completed_at: Some(now),
+            has_streaming_content: false,
+            response_model,
+            stop_reason,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            cache_creation_input_tokens: cache.cache_creation,
+            cache_read_input_tokens: cache.cache_read,
+            cached_input_tokens: cache.cached,
+            response_payload: body_content,
         });
     });
 }
