@@ -20,6 +20,10 @@ let _startedAt: number = 0;
 let _restartCount: number = 0;
 let _lastHealth: { ok: boolean; at: number; error?: string } = { ok: false, at: 0 };
 let _cleaningUp = false;
+// 每次 doStart 递增。用于区分「当前进程」与「已被 restart 替换的旧进程」：
+// 旧进程的 exited 回调看到 generation 已变就不再 auto-restart，避免与
+// restartRustProxy 的 doStart 并发 spawn 多个 rust-proxy 抢端口/IPC socket。
+let _generation = 0;
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -63,23 +67,41 @@ export function startRustProxy(): void {
     startHealthCheckLoop();
 }
 
-/** Kill and restart the Rust proxy. */
-export async function restartRustProxy(): Promise<{ ok: boolean; error?: string }> {
-    if (_cleaningUp) return { ok: false, error: 'Shutting down' };
+// restartRustProxy 并发锁：UI「重启代理」与 bridge auto-restart 可能同时触发,
+// 这里做单飞(single-flight)——进行中的重启期间, 后到的请求直接复用同一个 Promise,
+// 避免 kill/doStart 并发 spawn 多个 rust-proxy 抢 3311 与 IPC socket。
+let _restartInFlight: Promise<{ ok: boolean; error?: string }> | null = null;
 
-    if (_proc && _proc.exitCode === null) {
-        _proc.kill('SIGTERM');
+/** Kill and restart the Rust proxy. 并发安全（进行中的重启会单飞合并）。 */
+export function restartRustProxy(): Promise<{ ok: boolean; error?: string }> {
+    if (_cleaningUp) return Promise.resolve({ ok: false, error: 'Shutting down' });
+    if (_restartInFlight) {
+        console.log('[rust-proc] restart 已在进行, 合并本次并发请求');
+        return _restartInFlight;
+    }
+    _restartInFlight = doRestart().finally(() => { _restartInFlight = null; });
+    return _restartInFlight;
+}
+
+async function doRestart(): Promise<{ ok: boolean; error?: string }> {
+    const oldProc = _proc;
+    // 先 bump generation，使下面 kill 触发的 oldProc.exited 回调判定为「已被替换」，
+    // 不再走 auto-restart 分支（否则会与本函数末尾的 doStart 并发 spawn 第二个进程）。
+    _generation++;
+    if (oldProc && oldProc.exitCode === null) {
+        oldProc.kill('SIGTERM');
         // Wait up to 5s for graceful shutdown
         for (let i = 0; i < 50; i++) {
-            if (_proc.exitCode !== null) break;
+            if (oldProc.exitCode !== null) break;
             await new Promise(r => setTimeout(r, 100));
         }
-        if (_proc.exitCode === null) {
-            _proc.kill('SIGKILL');
+        if (oldProc.exitCode === null) {
+            oldProc.kill('SIGKILL');
         }
     }
 
-    _restartCount++;
+    // 手动重启不算崩溃，重置计数，给新进程留满 auto-restart 额度。
+    _restartCount = 0;
     _startedAt = 0;
     doStart();
     return { ok: true };
@@ -113,6 +135,7 @@ function rustBinPath(): string {
 }
 
 function doStart(): void {
+    const myGen = ++_generation;
     // Clean up stale IPC socket
     const sockPath = process.env.LRS_IPC_SOCKET || '/tmp/lrs-ipc.sock';
     try { require('node:fs').unlinkSync(sockPath); } catch {}
@@ -141,17 +164,24 @@ function doStart(): void {
     pipeStream(_proc.stderr, 'rust:err');
 
     // Monitor exit
-    _proc.exited.then((code) => {
+    const proc = _proc;
+    proc.exited.then((code) => {
         const reason = code !== null
             ? `exited with code ${code}`
-            : `killed by signal ${_proc?.signalCode || 'unknown'}`;
+            : `killed by signal ${proc.signalCode || 'unknown'}`;
         console.log(`[rust-proc] Rust proxy ${reason}`);
 
-        if (!_cleaningUp && _restartCount < MAX_RESTARTS) {
+        // 仅当这是「当前最新一代」的进程意外退出时才 auto-restart。
+        // 若 generation 已变（被 restartRustProxy 主动替换），说明新进程已由
+        // restartRustProxy 的 doStart 启动，这里不能再 spawn，否则两个 rust-proxy
+        // 抢 3311 端口与 IPC socket，最终 socket 路径指向已死进程、bridge 连不上。
+        if (_generation !== myGen || _cleaningUp) return;
+
+        if (_restartCount < MAX_RESTARTS) {
             _restartCount++;
             console.log(`[rust-proc] Auto-restarting in ${RESTART_DELAY_MS / 1000}s (attempt ${_restartCount}/${MAX_RESTARTS})`);
             setTimeout(doStart, RESTART_DELAY_MS);
-        } else if (!_cleaningUp) {
+        } else {
             console.log(`[rust-proc] Max restarts (${MAX_RESTARTS}) reached, giving up`);
         }
     });

@@ -170,6 +170,11 @@ let decoder = new FrameDecoder();
 let connected = false;
 let onMessage: ((msg: RustToTsMessage) => void) | null = null;
 let lastConnectedAt: number = 0;
+// 最近一次「从已连接 → 断开」(下降沿) 的时间。scheduleReconnect 用 Date.now()-lastDisconnectedAt
+// 判断「真正持续断开的时长」。原来用 Date.now()-lastConnectedAt（距上次连上的时长），会导致
+// bridge 稳定连着跑 30s+ 后，一旦短暂断开（如 UI 点重启代理 kill 了 rust-proxy）就被误判为
+// 「断开超阈值」从而触发 auto-restart，与重启端点的 restartRustProxy 并发 → 多进程抢端口循环。
+let lastDisconnectedAt: number = 0;
 let restartingRust = false;
 const DISCONNECT_RESTART_THRESHOLD_MS = 30_000;
 
@@ -255,6 +260,7 @@ function connect(): void {
 
   socket.on('close', () => {
     console.log('[rust-bridge] Connection closed');
+    if (connected) lastDisconnectedAt = Date.now();
     connected = false;
     socket = null;
     void scheduleReconnect();
@@ -266,6 +272,7 @@ function connect(): void {
     } else {
       console.error('[rust-bridge] Socket error:', err.message);
     }
+    if (connected) lastDisconnectedAt = Date.now();
     connected = false;
     if (socket) {
       socket.destroy();
@@ -278,7 +285,9 @@ function connect(): void {
 async function scheduleReconnect(): Promise<void> {
   if (reconnectTimer) return;
 
-  const disconnectedDuration = lastConnectedAt ? Date.now() - lastConnectedAt : 0;
+  // 真正的断开时长：只有持续断开超过阈值（rust-proxy 可能挂了）才 auto-restart。
+  // 短暂断开（如 UI 重启代理）disconnectedDuration 接近 0，不会误触发。
+  const disconnectedDuration = lastDisconnectedAt ? Date.now() - lastDisconnectedAt : 0;
 
   // Auto-restart Rust if disconnected for too long
   if (disconnectedDuration > DISCONNECT_RESTART_THRESHOLD_MS && !restartingRust) {

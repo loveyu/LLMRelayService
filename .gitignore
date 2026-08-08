@@ -179,7 +179,9 @@ data/
 *.sqlite3
 
 # Personal test scripts (not for public distribution)
-scripts/
+# scripts/dev-tmux.sh 是入库的 dev 编排脚本, 其余 scripts/ 下仍是个人测试脚本
+scripts/*
+!scripts/dev-tmux.sh
 .local/
 
 .idea

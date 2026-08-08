@@ -17,7 +17,7 @@
 - 做完前端改动后，至少运行：
   - `cd console/ai-proxy-dashboard && bun run typecheck`
   - `cd console/ai-proxy-dashboard && bun run build`
-- **push 前必须先启动本地后端服务验证无报错**：`bun run dev:server`，确认服务正常启动（无崩溃、无 ReferenceError 等启动时错误）后再 push。服务启动后可用 Ctrl-C 停止。
+- **push 前必须先启动本地 dev 环境验证无报错**：`scripts/dev-tmux.sh`（tmux 编排 vite + 后端 + rust-proxy），用 `scripts/dev-tmux.sh status` 与 `curl -s 127.0.0.1:3311/health`（看 `config_synced:true`）确认健康后再 push。详见下方「Dev 环境（tmux 编排）」。
 - **数据库迁移：只用 drizzle-kit，禁用 inline migrations。**
   - 改 schema 后必须运行 `drizzle-kit generate` 生成迁移文件
   - **schema 改动和迁移文件必须在同一个 commit 中提交**，禁止只 push schema 不 push 迁移
@@ -29,6 +29,17 @@
 - 如果根目录 lockfile 因依赖变化被修改（例如 `bun.lock`），不要漏提、漏 push。
 - **禁止将 API Key、token、密码等敏感凭证提交到仓库**。提交前检查变更中是否包含 `sk-`、`api_key`、`secret` 等敏感信息。
 - **测试脚本（bench、compare 等一次性验证脚本）无需提交到仓库**，用完即删。
+
+### Dev 环境（tmux 编排）
+
+- 启动/重启 dev 一律用 `scripts/dev-tmux.sh`（**脚本入库、团队共用**）：在 tmux session `lrs-dev` 里编排 vite（:5180）+ 后端 server（:8300，自动 spawn rust-proxy :3311）。
+  - `scripts/dev-tmux.sh` — 创建/补齐会话（默认 up，后台 detached）
+  - `scripts/dev-tmux.sh attach` — 创建/补齐后挂接（`Ctrl-b d` 脱离，不停进程）
+  - `scripts/dev-tmux.sh restart` — 杀会话 → 等端口释放 → 重建（改了 `.env` / 重新编译 rust-proxy 后用）
+  - `scripts/dev-tmux.sh stop` / `status`
+  - 幂等 + 端口感知：端口在监听就复用（含外部已启动的进程），只补齐没起的服务，不强杀外部进程；防 tmux 会话名前缀冲突。
+- **禁止手动 `bun run dev:server` / 单独 `kill` rust-proxy**：手动启停会留孤儿 rust-proxy + stale IPC socket（`/tmp/lrs-ipc.sock`），下次 rust-proxy bind 到 stale listener、TS bridge 连不上，连通性测试报「Rust 配置尚未同步」。要重启 dev 走 `scripts/dev-tmux.sh restart`（kill 整个 tmux session → 进程组连带退出 → 干净冷启动）。
+- **生产是独立容器**（端口 3000/3301），与 dev（8300/3311/5180）互不冲突，dev 进程可随意关闭/重启，不影响生产。
 
 ### Changelog 规范
 - 变更日志统一存放在项目根目录 `changelog/` 文件夹下，**按日期一天一个文件**，文件名格式 `YYYY-MM-DD.md`（如 `changelog/2026-04-18.md`）。
