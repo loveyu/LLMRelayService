@@ -237,7 +237,7 @@ import('./rust-process').then(({ startRustProxy: startRust, stopRustProxy }) => 
               original_route_prefix: null,
               original_request_model: null,
               retry_attempt: 0,
-              source_request_type: 'chat_completion',
+              source_request_type: msg.sourceRequestType ?? 'chat_completion',
             } as any);
             break;
           }

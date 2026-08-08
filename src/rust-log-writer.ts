@@ -101,7 +101,7 @@ async function saveRequestLog(msg: any) {
     original_route_prefix: null,
     original_request_model: null,
     retry_attempt: 0,
-    source_request_type: 'chat_completion',
+    source_request_type: msg.sourceRequestType ?? 'chat_completion',
   } as any);
   console.log(`[log-writer] Request saved: ${msg.requestId.substring(0,8)} model=${msg.requestModel}`);
 }

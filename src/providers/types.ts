@@ -5,7 +5,7 @@ import type {
 import type { RouteAuthConfig } from '../config';
 
 export type UpstreamType = 'anthropic' | 'openai';
-export type DetectedRequestKind = 'generic' | 'unknown';
+export type DetectedRequestKind = 'generic' | 'unknown' | 'connectivity_test';
 
 export interface UsageData {
   model: string;

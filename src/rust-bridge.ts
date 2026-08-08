@@ -104,6 +104,8 @@ interface RustRequestLog {
   forwardHeaders: Record<string, string>;
   apiKeyId: string | null;
   apiKeyName: string | null;
+  /** 请求来源类型：真实转发 "chat_completion"，连通性测试 "connectivity_test"。 */
+  sourceRequestType?: string;
 }
 
 interface RustResponseLog {

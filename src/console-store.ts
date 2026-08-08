@@ -458,6 +458,7 @@ type ConsoleUsageRow = {
 const CLIENT_LABELS: Record<DetectedRequestKind, string> = {
   generic: 'Generic',
   unknown: '未知',
+  connectivity_test: '连通性测试',
 };
 
 function getModelBucketExpression() {
@@ -811,7 +812,7 @@ async function listUsageRows(filters?: ConsoleQueryFilters): Promise<ConsoleUsag
     cost_pricing_json: consoleRequests.costPricingJson,
     failover_from: consoleRequests.failoverFrom,
   }).from(consoleRequests)
-    .where(buildRequestWhere(filters));
+    .where(withoutConnectivityTests(buildRequestWhere(filters)));
 
   return rows.map((row) => ({
     request_id: String(row.request_id),
@@ -951,9 +952,22 @@ async function buildUsageStats(filters?: ConsoleQueryFilters): Promise<ConsoleUs
   };
 }
 
+/** 连通性测试是合成的探测请求，不计入用量、健康度等聚合统计（日志列表仍保留）。 */
+function excludeConnectivityTests(): SQL {
+  return or(
+    isNull(consoleRequests.sourceRequestType),
+    ne(consoleRequests.sourceRequestType, 'connectivity_test'),
+  ) as SQL;
+}
+
+/** 在已有 where 基础上叠加「排除连通性测试」条件。 */
+function withoutConnectivityTests(base: SQL | undefined): SQL {
+  const extra = excludeConnectivityTests();
+  return (base ? and(base, extra) : extra) as SQL;
+}
+
 function buildRequestWhere(filters?: ConsoleQueryFilters, options?: { requireCompletedResponse?: boolean }): SQL | undefined {
   const conditions: SQL[] = [];
-
   if (options?.requireCompletedResponse) {
     conditions.push(isNotNull(consoleRequests.responseStatus));
   }
@@ -1339,7 +1353,8 @@ function buildListAnalysis(record: {
   };
 }
 
-function getRequestClientLabel(apiKeyName: string | null | undefined, _sourceRequestType: DetectedRequestKind): string {
+function getRequestClientLabel(apiKeyName: string | null | undefined, sourceRequestType: DetectedRequestKind): string {
+  if (sourceRequestType === 'connectivity_test') return '连通性测试';
   if (apiKeyName && apiKeyName.trim()) return apiKeyName.trim();
   return '匿名';
 }
@@ -1862,7 +1877,7 @@ export async function getProviderHealthStatuses(): Promise<Record<string, Provid
     success: sql<number>`sum(CASE WHEN ${consoleRequests.responseStatus} >= 200 AND ${consoleRequests.responseStatus} < 400 THEN 1 ELSE 0 END)`,
   })
     .from(consoleRequests)
-    .where(gte(consoleRequests.createdAt, oneHourAgo))
+    .where(and(gte(consoleRequests.createdAt, oneHourAgo), excludeConnectivityTests()))
     .groupBy(consoleRequests.routePrefix);
 
   const result: Record<string, ProviderHealthStatus> = {};

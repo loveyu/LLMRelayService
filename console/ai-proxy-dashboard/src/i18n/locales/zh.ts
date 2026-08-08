@@ -348,6 +348,7 @@ export default {
     colRoute: "渠道",
     colModel: "模型",
     colSource: "来源",
+    testBadge: "测试",
     colStatus: "状态",
     colLatency: "耗时",
     colTokens: "Token 数",

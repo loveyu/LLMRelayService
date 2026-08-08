@@ -11,6 +11,11 @@ use tracing::{error, info, warn};
 const IPC_SOCKET_PATH: &str = "/tmp/lrs-ipc.sock";
 const MAX_FRAME_LENGTH: usize = 16 * 1024 * 1024;
 
+/// 兼容旧发送方：未显式指定来源时按真实转发处理。
+fn default_source_request_type() -> String {
+    "chat_completion".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TsToRustMessage {
@@ -50,6 +55,10 @@ pub enum RustToTsMessage {
         api_key_id: Option<String>,
         #[serde(rename = "apiKeyName")]
         api_key_name: Option<String>,
+        /// 请求来源类型：真实转发为 "chat_completion"，连通性测试为 "connectivity_test"。
+        /// 控制台据此区分展示，并把测试请求排除出用量统计。
+        #[serde(rename = "sourceRequestType", default = "default_source_request_type")]
+        source_request_type: String,
     },
     ResponseLog {
         #[serde(rename = "requestId")]

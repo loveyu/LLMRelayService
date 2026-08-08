@@ -1026,6 +1026,7 @@ fn send_request_log(
             forward_headers: fh,
             api_key_id,
             api_key_name,
+            source_request_type: "chat_completion".to_string(),
         });
     });
 }

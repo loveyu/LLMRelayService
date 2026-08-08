@@ -226,6 +226,9 @@ export function RequestLogTable({
 
                     {/* 渠道 / 模型 */}
                     <span className="truncate">
+                      {item.source_request_type === "connectivity_test" && (
+                        <Badge variant="secondary" className="mr-1 text-[10px]">{t("logTable.testBadge")}</Badge>
+                      )}
                       <span className="font-semibold text-foreground">{item.route_prefix}</span>
                       <span className="ml-1 text-[11px] text-muted-foreground/80">· {shortText(item.request_model, 22)}</span>
                     </span>
@@ -376,6 +379,9 @@ export function RequestLogTable({
                     </span>
                     <span>
                       <Badge variant="outline" className="text-[10px]">{item.route_prefix}</Badge>
+                      {item.source_request_type === "connectivity_test" && (
+                        <Badge variant="secondary" className="ml-1 text-[10px]">{t("logTable.testBadge")}</Badge>
+                      )}
                     </span>
                     <span className="truncate font-mono text-[11px] text-muted-foreground">
                       {shortText(item.request_model, 20)}

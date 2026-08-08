@@ -348,6 +348,7 @@ export default {
     colRoute: "Channel",
     colModel: "Model",
     colSource: "Source",
+    testBadge: "Test",
     colStatus: "Status",
     colLatency: "Latency",
     colTokens: "Tokens",
