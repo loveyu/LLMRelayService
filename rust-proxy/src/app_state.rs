@@ -2,7 +2,7 @@ use crate::config::{
     AliasTarget, ApiKeyInfo, ConfigEntry, GatewayFailoverPolicy, GatewayTimeoutSettings,
 };
 use crate::ipc::IpcSender;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -49,6 +49,9 @@ pub struct AppState {
     pub config_synced: Arc<RwLock<bool>>,
     pub gateway_admin_key: Arc<String>,
     pub ipc: Arc<IpcSender>,
+    /// 连通性测试中已知「客户端不传 stream 时上游强制流式」的 (channel, model) 集合。
+    /// 内存级，进程重启失效。首次探测到后记下，后续该组合直接走流式、跳过必失败的非流式尝试。
+    pub test_requires_stream: Arc<RwLock<HashSet<String>>>,
 }
 
 impl AppState {
@@ -63,6 +66,7 @@ impl AppState {
             config_synced: Arc::new(RwLock::new(false)),
             gateway_admin_key: Arc::new(gateway_admin_key),
             ipc: Arc::new(ipc),
+            test_requires_stream: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 }
