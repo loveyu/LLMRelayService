@@ -770,6 +770,16 @@ export default {
     testFailed: "测试失败",
     rawResponse: "原始响应",
     retest: "重新测试",
+    copyResult: "复制结果",
+    copyResultHeader: "模型测试结果",
+    resultFieldChannel: "渠道",
+    resultFieldModel: "模型",
+    resultFieldProtocol: "协议",
+    resultFieldStatus: "状态",
+    resultFieldLatency: "延迟",
+    resultFieldMessage: "消息",
+    usageInput: "输入 tokens",
+    usageOutput: "输出 tokens",
   },
 
   // ── Keys Page ──

@@ -770,6 +770,16 @@ export default {
     testFailed: "Test Failed",
     rawResponse: "Raw Response",
     retest: "Retest",
+    copyResult: "Copy result",
+    copyResultHeader: "Model Test Result",
+    resultFieldChannel: "Channel",
+    resultFieldModel: "Model",
+    resultFieldProtocol: "Protocol",
+    resultFieldStatus: "Status",
+    resultFieldLatency: "Latency",
+    resultFieldMessage: "Message",
+    usageInput: "Input tokens",
+    usageOutput: "Output tokens",
   },
 
   // ── Keys Page ──

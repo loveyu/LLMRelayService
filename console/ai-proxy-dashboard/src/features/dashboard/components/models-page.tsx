@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Pencil, RefreshCw, Terminal, Wifi } from "lucide-react"
+import { Copy, Pencil, RefreshCw, Terminal, Wifi } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -40,6 +40,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { toast } from "@/components/ui/toast"
+import { useIsMobile } from "@/hooks/use-is-mobile"
 import { fetchModels, testProvider, updateModelMetadata } from "@/features/dashboard/api"
 import type { ConsoleModelPricing, GatewayModel, TestProviderResult } from "@/features/dashboard/types"
 
@@ -57,7 +59,76 @@ function formatPrice(price?: number) {
   return `$${price.toFixed(2)}`
 }
 
-function ModelTable({
+// 从测试的原始响应里提取 token 用量。OpenAI 兼容协议使用 prompt_tokens /
+// completion_tokens，Anthropic 使用 input_tokens / output_tokens。
+function extractUsage(raw: unknown): { input?: number; output?: number } | null {
+  if (!raw || typeof raw !== "object") return null
+  const usage = (raw as Record<string, unknown>).usage
+  if (!usage || typeof usage !== "object") return null
+  const u = usage as Record<string, unknown>
+  const input = u.input_tokens ?? u.prompt_tokens
+  const output = u.output_tokens ?? u.completion_tokens
+  const result: { input?: number; output?: number } = {}
+  if (typeof input === "number") result.input = input
+  if (typeof output === "number") result.output = output
+  return Object.keys(result).length > 0 ? result : null
+}
+
+function buildTestSummary(
+  result: TestProviderResult,
+  model: GatewayModel | null,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  const lines: string[] = [t("models.copyResultHeader")]
+  lines.push(`${t("models.resultFieldChannel")}: ${model?.channelName ?? ""}`)
+  lines.push(`${t("models.resultFieldModel")}: ${result.model ?? model?.id ?? ""}`)
+  lines.push(`${t("models.resultFieldProtocol")}: ${model?.type ?? ""}`)
+  const status = result.statusCode
+    ? `${result.status} (HTTP ${result.statusCode})`
+    : result.status
+  lines.push(`${t("models.resultFieldStatus")}: ${status}`)
+  if (result.latencyMs != null) {
+    lines.push(`${t("models.resultFieldLatency")}: ${result.latencyMs} ms`)
+  }
+  lines.push(`${t("models.resultFieldMessage")}: ${result.message}`)
+  const usage = extractUsage(result.rawResponse)
+  if (usage) {
+    lines.push(`${t("models.usageInput")}: ${usage.input ?? "--"}`)
+    lines.push(`${t("models.usageOutput")}: ${usage.output ?? "--"}`)
+  }
+  if (result.rawResponse != null) {
+    lines.push("")
+    lines.push(t("models.rawResponse"))
+    lines.push(JSON.stringify(result.rawResponse, null, 2))
+  }
+  return lines.join("\n")
+}
+
+function MetricTile({
+  label,
+  value,
+  manual,
+  badgeText,
+}: {
+  label: string
+  value: string
+  manual?: boolean
+  badgeText?: string
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="flex items-center gap-1.5">
+        <span className="text-sm tabular-nums text-foreground">{value}</span>
+        {manual && badgeText ? (
+          <Badge variant="secondary" className="text-[10px]">{badgeText}</Badge>
+        ) : null}
+      </span>
+    </div>
+  )
+}
+
+function ModelDesktopTable({
   models,
   onTest,
   onEdit,
@@ -67,19 +138,6 @@ function ModelTable({
   onEdit: (model: GatewayModel) => void
 }) {
   const { t } = useTranslation()
-  if (models.length === 0) {
-    return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyTitle>{t("models.noModelsTitle")}</EmptyTitle>
-        </EmptyHeader>
-        <EmptyContent>
-          <EmptyDescription>{t("models.noModelsDesc")}</EmptyDescription>
-        </EmptyContent>
-      </Empty>
-    )
-  }
-
   return (
     <Table>
       <TableHeader>
@@ -141,6 +199,107 @@ function ModelTable({
       </TableBody>
     </Table>
   )
+}
+
+function ModelMobileList({
+  models,
+  onTest,
+  onEdit,
+}: {
+  models: GatewayModel[]
+  onTest: (model: GatewayModel) => void
+  onEdit: (model: GatewayModel) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <ul className="divide-y divide-border">
+      {models.map((model) => {
+        const hasPricingOverride = Boolean(model.override?.pricing)
+        const hasContextOverride = model.override?.context != null
+        return (
+          <li key={`${model.channelName}:${model.id}`} className="flex flex-col gap-3 p-4">
+            <div className="flex flex-col gap-1.5">
+              <span className="break-all font-mono text-xs font-medium">{model.id}</span>
+              <Badge variant="outline" className="w-fit font-normal">{model.channelName}</Badge>
+            </div>
+            <div className="flex flex-col gap-3">
+              <MetricTile
+                label={t("models.contextLength")}
+                value={formatContext(model.context)}
+                manual={hasContextOverride}
+                badgeText={t("models.manualBadge")}
+              />
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                <MetricTile
+                  label={t("models.inputPrice")}
+                  value={formatPrice(model.pricing?.input)}
+                  manual={hasPricingOverride}
+                  badgeText={t("models.manualBadge")}
+                />
+                <MetricTile label={t("models.outputPrice")} value={formatPrice(model.pricing?.output)} />
+                <MetricTile label={t("models.cacheReadPrice")} value={formatPrice(model.pricing?.cache_read)} />
+                <MetricTile label={t("models.cacheWritePrice")} value={formatPrice(model.pricing?.cache_write)} />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={() => onTest(model)}
+              >
+                <Wifi data-icon="inline-start" />
+                {t("common.test")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={() => onEdit(model)}
+              >
+                <Pencil data-icon="inline-start" />
+                {t("common.edit")}
+              </Button>
+            </div>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function ModelTable({
+  models,
+  onTest,
+  onEdit,
+}: {
+  models: GatewayModel[]
+  onTest: (model: GatewayModel) => void
+  onEdit: (model: GatewayModel) => void
+}) {
+  const { t } = useTranslation()
+  const isMobile = useIsMobile()
+
+  if (models.length === 0) {
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>{t("models.noModelsTitle")}</EmptyTitle>
+        </EmptyHeader>
+        <EmptyContent>
+          <EmptyDescription>{t("models.noModelsDesc")}</EmptyDescription>
+        </EmptyContent>
+      </Empty>
+    )
+  }
+
+  if (isMobile) {
+    return <ModelMobileList models={models} onTest={onTest} onEdit={onEdit} />
+  }
+
+  return <ModelDesktopTable models={models} onTest={onTest} onEdit={onEdit} />
 }
 
 type ModelMetadataDraft = {
@@ -316,6 +475,17 @@ export function ModelsPage({
       setTestDialogResult(errorResult)
     } finally {
       setTestDialogLoading(false)
+    }
+  }
+
+  async function handleCopyResult() {
+    if (!testDialogResult) return
+    const summary = buildTestSummary(testDialogResult, testDialogModel, t)
+    try {
+      await navigator.clipboard.writeText(summary)
+      toast.success(t("common.copied"))
+    } catch {
+      toast.error(t("common.copyFailed"))
     }
   }
 
@@ -528,6 +698,16 @@ export function ModelsPage({
             >
               {t("common.close")}
             </Button>
+            {testDialogResult && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void handleCopyResult()}
+              >
+                <Copy data-icon="inline-start" />
+                {t("models.copyResult")}
+              </Button>
+            )}
             {testDialogResult && (
               <Button
                 type="button"
