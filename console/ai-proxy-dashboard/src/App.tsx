@@ -151,7 +151,15 @@ export function App() {
         return <ApiDocsPage />
       case "logs":
       default:
-        return <LogsPage onUnauthorized={handleUnauthorized} />
+        return (
+          <LogsPage
+            onUnauthorized={handleUnauthorized}
+            selectedRequestId={route.page === "logs" ? route.id : undefined}
+            onSelectRequestId={(id) =>
+              id ? navigate({ page: "logs", id }) : navigate({ page: "logs" })
+            }
+          />
+        )
 
     }
   }

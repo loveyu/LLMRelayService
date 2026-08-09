@@ -32,8 +32,13 @@ export type LogsTimeRange = "1h" | "6h" | "24h" | "7d" | "all"
 
 export function LogsPage({
   onUnauthorized,
+  selectedRequestId,
+  onSelectRequestId,
 }: {
   onUnauthorized: () => void
+  /** 选中日志的 request_id，由 hash query param ?id= 驱动，便于分享/定位。 */
+  selectedRequestId?: string
+  onSelectRequestId: (id: string | null) => void
 }) {
   const isMobile = useIsMobile()
   const {
@@ -58,7 +63,7 @@ export function LogsPage({
   const [cacheFilter, setCacheFilter] = useState("")
   const [timeRange, setTimeRange] = useState<LogsTimeRange>("24h")
   const [liveMode, setLiveMode] = useState(false)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selectedId = selectedRequestId ?? null
   const [detail, setDetail] = useState<ConsoleRequestDetail | null>(null)
   const [detailError, setDetailError] = useState("")
   const [detailLoading, setDetailLoading] = useState(false)
@@ -304,7 +309,7 @@ export function LogsPage({
             sortBy={sortBy}
             sortOrder={sortOrder}
             onSort={handleSortChange}
-            onSelect={(requestId) => setSelectedId(requestId)}
+            onSelect={(requestId) => onSelectRequestId(requestId)}
             onApplyRouteFilter={setRouteFilter}
             onApplyModelFilter={setModelFilter}
             onApplySourceTypeFilter={setSourceTypeFilter}
@@ -329,7 +334,7 @@ export function LogsPage({
       <Sheet
         open={selectedId !== null}
         onOpenChange={(open) => {
-          if (!open) setSelectedId(null)
+          if (!open) onSelectRequestId(null)
         }}
       >
         <SheetContent

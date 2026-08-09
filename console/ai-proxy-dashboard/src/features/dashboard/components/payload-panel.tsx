@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronRight, Copy, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -16,8 +16,10 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Separator } from "@/components/ui/separator"
-import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/toast"
 import { JsonViewer } from "@/components/ui/json-viewer"
+import { JsonCodeViewer } from "@/components/ui/json-code-viewer"
+import { copyText } from "@/lib/clipboard"
 import { formatBytes, getPayloadBytes, getPayloadText } from "@/features/dashboard/utils"
 import { ChatDialogViewer } from "@/features/dashboard/components/chat-dialog-viewer"
 
@@ -101,6 +103,27 @@ export function PayloadPanel({
         : "json"
 
   const [viewMode, setViewMode] = useState<ViewMode>(defaultMode)
+
+  // Blob：把格式化 JSON 写成 blob: 链接并在新窗口打开，便于全屏查看 / 单独分析。
+  const handleOpenBlob = () => {
+    const blob = new Blob([payloadText], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const win = window.open(url, "_blank")
+    if (!win) {
+      URL.revokeObjectURL(url)
+      toast.error(t("payload.openBlobBlocked"))
+      return
+    }
+    // 新窗口加载 blob 需要一点时间，延迟回收 object URL（页面卸载时也会被 GC）。
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000)
+  }
+
+  // 复制：拷贝原始未格式化的 payload（直接取 prop，不经过 getPayloadText 的 2-space 重排）。
+  const handleCopyRaw = () => {
+    copyText(payload ?? "").then((ok) =>
+      ok ? toast.success(t("common.copied")) : toast.error(t("common.copyFailed")),
+    )
+  }
 
   return (
     <Card size="sm">
@@ -188,11 +211,20 @@ export function PayloadPanel({
               </div>
             )}
             {viewMode === "raw" && (
-              <Textarea
-                readOnly
-                value={payloadText}
-                className="min-h-[24rem] w-full resize-none overflow-auto whitespace-pre-wrap break-all bg-background font-mono text-[11px] leading-5"
-              />
+              <div className="space-y-2">
+                {/* 操作栏：位于语法高亮之上 —— blob(新窗口打开格式化 JSON) + 复制(原始未格式化 JSON) */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={handleOpenBlob}>
+                    <ExternalLink data-icon="inline-start" className="h-3.5 w-3.5" />
+                    {t("payload.openBlob")}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleCopyRaw}>
+                    <Copy data-icon="inline-start" className="h-3.5 w-3.5" />
+                    {t("payload.copyRaw")}
+                  </Button>
+                </div>
+                <JsonCodeViewer value={payloadText} />
+              </div>
             )}
           </>
         ) : (

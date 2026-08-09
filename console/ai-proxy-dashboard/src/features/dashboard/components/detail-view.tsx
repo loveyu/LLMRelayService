@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next"
+import { Copy } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
@@ -34,7 +35,6 @@ import {
   formatDuration,
   formatTime,
   getCostMetricRows,
-  shortText,
 } from "@/features/dashboard/utils"
 
 function statusStyle(code: number | null): { bg: string; fg: string } {
@@ -163,7 +163,7 @@ export function DetailView({
   // single-scroll layout, so the two stay in sync without duplicating content.
   const headerBlock = (
     <div className="shrink-0 border-b border-border px-3 py-3 sm:px-6 sm:py-4">
-      {/* Top: status + model + channel + request_id */}
+      {/* Top: status + model + channel */}
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <span
           className="shrink-0 rounded-md px-2.5 py-1 font-mono text-xs font-bold"
@@ -175,9 +175,32 @@ export function DetailView({
           {record.request_model}
         </span>
         <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">· {record.route_prefix}</span>
-        <span className="ml-auto hidden font-mono text-[11px] text-muted-foreground/70 sm:inline">
-          {shortText(record.request_id, 24)}
+      </div>
+
+      {/* request_id + 复制按钮：始终可见（含移动端），便于查看日志 id 排查 */}
+      <div className="mt-2 flex items-center gap-1.5">
+        <span className="shrink-0 text-[11px] text-muted-foreground/70">
+          {t("detail.requestId")}
         </span>
+        <code
+          className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground/80"
+          title={record.request_id}
+        >
+          {record.request_id}
+        </code>
+        <button
+          type="button"
+          title={t("detail.copyRequestId")}
+          className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onClick={() => {
+            copyText(record.request_id).then((ok) =>
+              ok ? toast.success(t("common.copied")) : toast.error(t("common.copyFailed")),
+            )
+          }}
+        >
+          <Copy className="h-3 w-3" />
+          <span className="hidden sm:inline">{t("common.copy")}</span>
+        </button>
       </div>
       {error ? (
         <Alert variant="destructive" className="mt-3">
