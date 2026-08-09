@@ -33,5 +33,12 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    // 强制 react / react-dom 全局单例，避免 @uiw/react-codemirror 这类库
+    // 在 dev 下被单独按 ESM 解析出第二份 react，触发 "Invalid hook call"。
+    dedupe: ["react", "react-dom"],
+  },
+  // 把 @uiw/react-codemirror 预打包进 deps，和 app 共用同一份 optimized react。
+  optimizeDeps: {
+    include: ["@uiw/react-codemirror"],
   },
 })
