@@ -284,7 +284,9 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
   v1.patch('/settings/timeouts', async (c) => {
     const payload = await c.req.json().catch(() => ({}));
     try {
-      return c.json({ data: await updateGatewayTimeoutSettings(payload as any) });
+      const data = await updateGatewayTimeoutSettings(payload as any);
+      syncConfigToRust().catch(() => {});
+      return c.json({ data });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
     }
@@ -297,7 +299,9 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
   v1.patch('/settings/failover', async (c) => {
     const payload = await c.req.json().catch(() => ({}));
     try {
-      return c.json({ data: await updateGatewayFailoverPolicy(payload as any) });
+      const data = await updateGatewayFailoverPolicy(payload as any);
+      syncConfigToRust().catch(() => {});
+      return c.json({ data });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
     }
@@ -356,6 +360,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     }
     try {
       const created = await createManagedApiKey(name, (payload as { cost_quota?: unknown }).cost_quota);
+      syncConfigToRust().catch(() => {});
       return c.json({ data: created }, 201);
     } catch (error) {
       return c.json(
@@ -375,6 +380,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     if (!updated) {
       return c.json({ error: 'API key not found' }, 404);
     }
+    syncConfigToRust().catch(() => {});
     return c.json({ data: updated });
   });
 
@@ -383,6 +389,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     if (!deleted) {
       return c.json({ error: 'API key not found' }, 404);
     }
+    syncConfigToRust().catch(() => {});
     return c.json({ data: { ok: true } });
   });
 
@@ -396,6 +403,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     if (!updated) {
       return c.json({ error: 'API key not found' }, 404);
     }
+    syncConfigToRust().catch(() => {});
     return c.json({ data: updated });
   });
 
@@ -409,6 +417,7 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     if (!updated) {
       return c.json({ error: 'API key not found' }, 404);
     }
+    syncConfigToRust().catch(() => {});
     return c.json({ data: updated });
   });
 

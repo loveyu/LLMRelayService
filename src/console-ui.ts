@@ -447,6 +447,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
     const payload = await c.req.json().catch(() => ({}));
     try {
       const settings = await updateGatewayTimeoutSettings(payload as any);
+      syncConfigToRust().catch(() => {});
       return c.json({ ok: true, ...settings, runtime: buildSettingsRuntimeInfo() });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
@@ -476,6 +477,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
     const payload = await c.req.json().catch(() => ({}));
     try {
       const policy = await updateGatewayFailoverPolicy(payload as any);
+      syncConfigToRust().catch(() => {});
       return c.json({ ok: true, ...policy });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
@@ -707,6 +709,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
 
     try {
       const created = await createManagedApiKey(name, (payload as { cost_quota?: unknown }).cost_quota);
+      syncConfigToRust().catch(() => {});
       return c.json(created, 201);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
@@ -748,6 +751,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
       return c.json({ error: '未找到 API key' }, 404);
     }
 
+    syncConfigToRust().catch(() => {});
     return c.json(updated);
   });
 
@@ -764,6 +768,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
       return c.json({ error: '未找到 API key' }, 404);
     }
 
+    syncConfigToRust().catch(() => {});
     return c.json({ ok: true });
   });
 
@@ -786,6 +791,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
       return c.json({ error: '未找到 API key' }, 404);
     }
 
+    syncConfigToRust().catch(() => {});
     return c.json(updated);
   });
 
@@ -808,6 +814,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
       return c.json({ error: '未找到 API key' }, 404);
     }
 
+    syncConfigToRust().catch(() => {});
     return c.json(updated);
   });
 
