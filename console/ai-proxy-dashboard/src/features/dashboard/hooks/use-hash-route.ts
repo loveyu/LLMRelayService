@@ -9,7 +9,7 @@ export type PageRoute =
   | { page: "routes"; tab?: RouteTab }
   | { page: "models" }
   | { page: "keys" }
-  | { page: "logs"; id?: string }
+  | { page: "logs" }
   | { page: "settings" }
   | { page: "api" }
   | { page: "system" }
@@ -25,7 +25,7 @@ function parseHash(): PageRoute {
   const params = new URLSearchParams(queryString)
   if (pageName === "monitor" || pageName === "dashboard") return { page: "monitor" }
   if (pageName === "usage") return { page: "usage", client: params.get("client") || undefined }
-  if (pageName === "logs") return { page: "logs", id: params.get("id") || undefined }
+  if (pageName === "logs") return { page: "logs" }
   if (pageName === "providers") return { page: "providers" }
   if (pageName === "models") return { page: "models" }
   if (pageName === "routes") {
@@ -77,8 +77,6 @@ export function useHashRoute(): [PageRoute, (route: PageRoute) => void] {
       window.location.hash = `#/usage?client=${encodeURIComponent(target.client)}`
     } else if (target.page === "routes" && target.tab) {
       window.location.hash = `#/routes?tab=${encodeURIComponent(target.tab)}`
-    } else if (target.page === "logs" && target.id) {
-      window.location.hash = `#/logs?id=${encodeURIComponent(target.id)}`
     } else {
       window.location.hash = `#/${target.page}`
     }

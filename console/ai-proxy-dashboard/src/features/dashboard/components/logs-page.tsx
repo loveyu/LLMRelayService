@@ -32,13 +32,8 @@ export type LogsTimeRange = "1h" | "6h" | "24h" | "7d" | "all"
 
 export function LogsPage({
   onUnauthorized,
-  selectedRequestId,
-  onSelectRequestId,
 }: {
   onUnauthorized: () => void
-  /** 选中日志的 request_id，由 hash query param ?id= 驱动，便于分享/定位。 */
-  selectedRequestId?: string
-  onSelectRequestId: (id: string | null) => void
 }) {
   const isMobile = useIsMobile()
   const {
@@ -63,7 +58,13 @@ export function LogsPage({
   const [cacheFilter, setCacheFilter] = useState("")
   const [timeRange, setTimeRange] = useState<LogsTimeRange>("24h")
   const [liveMode, setLiveMode] = useState(false)
-  const selectedId = selectedRequestId ?? null
+  // 选中日志的 request_id：本地 state（关闭抽屉不触发整页 re-render）。
+  // 初值从 hash query param ?id= 读取，便于直接打开/分享某条日志链接。
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null
+    const qs = window.location.hash.split("?")[1] ?? ""
+    return new URLSearchParams(qs).get("id")
+  })
   const [detail, setDetail] = useState<ConsoleRequestDetail | null>(null)
   const [detailError, setDetailError] = useState("")
   const [detailLoading, setDetailLoading] = useState(false)
@@ -99,6 +100,18 @@ export function LogsPage({
       }
     })()
   }, [selectedId, onUnauthorized])
+
+  // 把当前选中的 request_id 静默写进 URL（#/logs?id=…），便于查看/分享日志 id。
+  // 用 history.replaceState 而非改 location.hash —— 不触发 hashchange，避免整页
+  // （App 层）re-render，关闭抽屉后列表数据/滚动位置原样保留，无需刷新。
+  useEffect(() => {
+    const targetHash = selectedId
+      ? `#/logs?id=${encodeURIComponent(selectedId)}`
+      : "#/logs"
+    if (window.location.hash !== targetHash) {
+      window.history.replaceState(null, "", targetHash)
+    }
+  }, [selectedId])
 
   // 防抖搜索 300ms
   useEffect(() => {
@@ -309,7 +322,7 @@ export function LogsPage({
             sortBy={sortBy}
             sortOrder={sortOrder}
             onSort={handleSortChange}
-            onSelect={(requestId) => onSelectRequestId(requestId)}
+            onSelect={(requestId) => setSelectedId(requestId)}
             onApplyRouteFilter={setRouteFilter}
             onApplyModelFilter={setModelFilter}
             onApplySourceTypeFilter={setSourceTypeFilter}
@@ -334,7 +347,7 @@ export function LogsPage({
       <Sheet
         open={selectedId !== null}
         onOpenChange={(open) => {
-          if (!open) onSelectRequestId(null)
+          if (!open) setSelectedId(null)
         }}
       >
         <SheetContent
