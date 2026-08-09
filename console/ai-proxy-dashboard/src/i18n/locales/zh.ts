@@ -430,6 +430,8 @@ export default {
     firstToken: "首 token",
     duration: "总时长",
     generationDuration: "生成时长",
+    inputTokens: "输入 tokens",
+    outputTokens: "输出 tokens",
     responseBodySize: "响应体积",
     transferMode: "传输方式",
     streaming: "SSE / 流式",

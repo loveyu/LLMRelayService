@@ -430,6 +430,8 @@ export default {
     firstToken: "First Token",
     duration: "Duration",
     generationDuration: "Generation Duration",
+    inputTokens: "Input Tokens",
+    outputTokens: "Output Tokens",
     responseBodySize: "Response Body Size",
     transferMode: "Transfer Mode",
     streaming: "SSE / Streaming",
