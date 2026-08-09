@@ -9,13 +9,15 @@ import { useIsDarkMode } from "@/hooks/use-is-dark-mode"
  * - 语法高亮（json 语言 + 主题配色）
  * - 折叠（foldGutter，点击 gutter 或快捷键收起/展开对象与数组）
  * - 行号、括号匹配、当前行高亮
+ * - 自动换行（lineWrapping）：长行/长值软换行，移动端不再被横向截断
  * - 跟随应用深色/浅色主题（oneDark / light）
+ * - height 不传时编辑器按内容自动撑高（适合请求/响应头这类短 JSON）；
+ *   传了则固定高度、内部滚动（适合大 payload）。
  *
- * 用在 PayloadPanel 的「原始」模式，替换原来的只读 Textarea：
- * 长文档可折叠，关键值有配色，便于排查 request/response payload。
+ * 用在 PayloadPanel 的「原始」模式 + 详情页的 headers 卡片。
  */
 const viewerTheme = EditorView.theme({
-  "&": { height: "100%", fontSize: "11px" },
+  "&": { fontSize: "11px" },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": {
     fontFamily:
@@ -26,13 +28,17 @@ const viewerTheme = EditorView.theme({
 
 export function JsonCodeViewer({
   value,
-  height = "24rem",
+  height,
 }: {
   value: string
+  /** 固定高度（如 "24rem"）；不传则按内容自动撑高。 */
   height?: string
 }) {
   const isDark = useIsDarkMode()
-  const extensions = useMemo(() => [json(), viewerTheme], [])
+  const extensions = useMemo(
+    () => [json(), EditorView.lineWrapping, viewerTheme],
+    [],
+  )
 
   return (
     <div className="overflow-hidden rounded-md border border-border">

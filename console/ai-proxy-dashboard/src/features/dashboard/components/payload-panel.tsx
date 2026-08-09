@@ -223,7 +223,7 @@ export function PayloadPanel({
                     {t("payload.copyRaw")}
                   </Button>
                 </div>
-                <JsonCodeViewer value={payloadText} />
+                <JsonCodeViewer value={payloadText} height="24rem" />
               </div>
             )}
           </>

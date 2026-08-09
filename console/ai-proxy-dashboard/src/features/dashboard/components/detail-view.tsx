@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
+import { JsonCodeViewer } from "@/components/ui/json-code-viewer"
 import { copyText } from "@/lib/clipboard"
 import { useIsMobile } from "@/hooks/use-is-mobile"
 import { DetailMetricTable } from "@/features/dashboard/components/detail-metric-table"
@@ -72,12 +73,15 @@ function ReadonlyTextCard({
   value,
   emptyTitle,
   emptyDescription,
+  code = false,
 }: {
   title: string
   description: string
   value: string
   emptyTitle: string
   emptyDescription: string
+  /** 内容是 JSON 时用 CodeMirror 渲染（语法高亮 + 折叠 + 自动换行），与 payload 原始模式一致。 */
+  code?: boolean
 }) {
   const hasContent = value.trim().length > 0 && value.trim() !== "{}"
 
@@ -89,11 +93,15 @@ function ReadonlyTextCard({
       </CardHeader>
       <CardContent className="pt-4">
         {hasContent ? (
-          <Textarea
-            readOnly
-            value={value}
-            className="min-h-64 w-full resize-none overflow-auto whitespace-pre-wrap break-all bg-background font-mono text-[11px] leading-5"
-          />
+          code ? (
+            <JsonCodeViewer value={value} />
+          ) : (
+            <Textarea
+              readOnly
+              value={value}
+              className="min-h-64 w-full resize-none overflow-auto whitespace-pre-wrap break-all bg-background font-mono text-[11px] leading-5"
+            />
+          )
         ) : (
           <Empty className="border-border/70">
             <EmptyHeader>
@@ -303,6 +311,7 @@ export function DetailView({
             value={originalHeadersText}
             emptyTitle={t("detail.noOriginalHeaders")}
             emptyDescription={t("detail.noOriginalHeadersDesc")}
+            code
           />
           {/* Meta info */}
           <Card size="sm">
@@ -350,6 +359,7 @@ export function DetailView({
             value={forwardHeadersText}
             emptyTitle={t("detail.noForwardedHeaders")}
             emptyDescription={t("detail.noForwardedHeadersDesc")}
+            code
           />
         </div>
       </TabsContent>
@@ -377,6 +387,7 @@ export function DetailView({
             value={responseHeadersText}
             emptyTitle={t("detail.noResponseHeaders")}
             emptyDescription={t("detail.noResponseHeadersDesc")}
+            code
           />
         </div>
       </TabsContent>
