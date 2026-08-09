@@ -391,7 +391,14 @@ export function ChatDialogViewer({ messages }: { messages: ChatMessage[] }) {
               </span>
               <div
                 className={cn(
-                  "min-w-0 space-y-1.5",
+                  // [&>*]:min-w-0 + max-w-full：把每个气泡/卡片都钳制在本包装列宽度���。
+                  // 工具调用/工具结果卡片（border-l-2）头部是 flex 行，内含 truncate 的
+                  // 长工具名（如 mcp__plugin_chrome-devtools-mcp_chrome-devtools__take_screenshot）。
+                  // 卡片作为 flex-col 包装列里 align-self:start 的子项，默认按 max-content 撑宽，
+                  // 长工具名会把卡片顶出包装列、顶出视口（移动端右侧被 overflow:hidden 裁掉看不到），
+                  // truncate 也因此失效。给所有直接子项 max-w-full(+min-w-0) 后，卡片回缩到列宽，
+                  // 内层 truncate 才正常生效；短内容的卡片仍按内容窄排，气泡(w-full)无视觉变化。
+                  "min-w-0 space-y-1.5 [&>*]:min-w-0 [&>*]:max-w-full",
                   isUser && "max-w-[85%] flex flex-col items-end",
                   isAssistant && "max-w-[85%] flex flex-col items-start",
                   isSystem && "max-w-[92%]",
