@@ -21,12 +21,205 @@ import { JsonViewer } from "@/components/ui/json-viewer"
 import { JsonCodeViewer } from "@/components/ui/json-code-viewer"
 import { copyText } from "@/lib/clipboard"
 import { formatBytes, getPayloadBytes, getPayloadText } from "@/features/dashboard/utils"
-import { ChatDialogViewer } from "@/features/dashboard/components/chat-dialog-viewer"
+import { ChatDialogViewer, type ChatMessage, type ContentBlock } from "@/features/dashboard/components/chat-dialog-viewer"
 
-type ChatMessage = {
-  role: string
-  content: unknown
+// OpenAI Responses API（Codex CLI / ChatGPT Codex 走 /openai/v1/responses）的请求体用 `input`
+// 数组承载对话，每个条目用 `type` 字段区分：message / custom_tool_call /
+// custom_tool_call_output / reasoning / additional_tools / function_call(_output) 等，
+// 与 Anthropic 及 OpenAI Chat Completions 的 messages+content-block 结构完全不同。
+// 这里把它们归一化成 ChatDialogViewer 已能渲染的 ChatMessage + ContentBlock 词表，
+// 不引入新的渲染分支，保持对话列表视图统一。
+
+// Responses API input 数组里 content / output 的单个 part。
+type ResponsesPart = {
+  type?: string
+  text?: string
+  refusal?: string
+}
+
+// Responses API input 数组的单个条目（只列归一化用到的字段）。
+type ResponsesItem = {
+  type?: string
+  role?: string
+  id?: string
+  content?: unknown
   name?: string
+  call_id?: string
+  input?: unknown
+  output?: unknown
+  summary?: Array<{ type?: string; text?: string }>
+  encrypted_content?: string
+  tools?: unknown[]
+}
+
+const RESPONSES_ITEM_TYPES = new Set<string>([
+  "message",
+  "function_call",
+  "function_call_output",
+  "custom_tool_call",
+  "custom_tool_call_output",
+  "reasoning",
+  "additional_tools",
+  "computer_call",
+  "computer_call_output",
+  "web_search_call",
+  "file_search_call",
+  "image_generation_call",
+])
+
+function isResponsesApiInput(items: unknown[]): boolean {
+  return items.some(
+    (i) =>
+      i !== null &&
+      typeof i === "object" &&
+      RESPONSES_ITEM_TYPES.has((i as ResponsesItem).type ?? ""),
+  )
+}
+
+// additional_tools 可能是 namespace 嵌套（Codex 的 functions/collaboration 命名空间），
+// 拍平成扁平工具列表交给 ToolsView。
+function flattenResponsesTools(tools: unknown[]): unknown[] {
+  const out: unknown[] = []
+  for (const t of tools) {
+    if (t !== null && typeof t === "object") {
+      const obj = t as Record<string, unknown>
+      if (obj.type === "namespace" && Array.isArray(obj.tools)) {
+        out.push(...flattenResponsesTools(obj.tools))
+      } else {
+        out.push(obj)
+      }
+    }
+  }
+  return out
+}
+
+// message.content（input_text/output_text/text/refusal/image）→ ContentBlock[]
+function normalizeResponsesContent(content: unknown): ContentBlock[] | string {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return []
+  const blocks: ContentBlock[] = []
+  for (const part of content) {
+    if (typeof part === "string") {
+      blocks.push({ type: "text", text: part })
+      continue
+    }
+    if (part !== null && typeof part === "object") {
+      const p = part as ResponsesPart
+      if (p.type === "input_text" || p.type === "output_text" || p.type === "text") {
+        if (typeof p.text === "string") blocks.push({ type: "text", text: p.text })
+      } else if (p.type === "refusal" && typeof p.refusal === "string") {
+        blocks.push({ type: "text", text: p.refusal })
+      } else if (p.type === "image_url" || p.type === "input_image" || p.type === "image") {
+        blocks.push({ type: "image" })
+      } else {
+        // 未知 part：保留 JSON 文本，避免静默丢数据
+        blocks.push({ type: "text", text: JSON.stringify(part) })
+      }
+    }
+  }
+  return blocks
+}
+
+// tool 输出（string 或 part 数组）→ 单段文本，交给 ToolResultBlock。
+function normalizeResponsesOutput(output: unknown): string {
+  if (typeof output === "string") return output
+  if (Array.isArray(output)) {
+    const texts: string[] = []
+    for (const part of output) {
+      if (typeof part === "string") {
+        texts.push(part)
+      } else if (part !== null && typeof part === "object") {
+        const p = part as ResponsesPart
+        const txt = p.text ?? p.refusal
+        if (typeof txt === "string") texts.push(txt)
+        else texts.push(JSON.stringify(part))
+      }
+    }
+    return texts.join("\n")
+  }
+  if (output === null || output === undefined) return ""
+  return JSON.stringify(output)
+}
+
+// Responses API input 数组 → { messages, tools }，复用 viewer 词表：
+// - message(user/assistant)        → 文本气泡
+// - message(developer/system)      → system 样式气泡（系统级指令）
+// - custom_tool_call/function_call → tool_use 卡片（assistant 侧，input 保留字符串）
+// - custom_tool_call_output 等     → tool_result 卡片（user 侧）
+// - reasoning                      → thinking 折叠块（summary 为空时由占位说明）
+// - additional_tools               → 不进对话列表，折叠进 Tools tab
+function normalizeResponsesApiInput(items: ResponsesItem[]): {
+  messages: ChatMessage[]
+  tools: unknown[]
+} {
+  const messages: ChatMessage[] = []
+  const tools: unknown[] = []
+  for (const item of items) {
+    if (item === null || typeof item !== "object") continue
+    switch (item.type) {
+      case "additional_tools": {
+        if (Array.isArray(item.tools)) tools.push(...flattenResponsesTools(item.tools))
+        break
+      }
+      case "message": {
+        messages.push({
+          role: item.role || "unknown",
+          content: normalizeResponsesContent(item.content),
+        })
+        break
+      }
+      case "custom_tool_call":
+      case "function_call": {
+        messages.push({
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: item.call_id || item.id || "",
+              name: item.name || "unknown",
+              input: item.input,
+            } as ContentBlock,
+          ],
+        })
+        break
+      }
+      case "custom_tool_call_output":
+      case "function_call_output": {
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: item.call_id || item.id || "",
+              content: normalizeResponsesOutput(item.output),
+            } as ContentBlock,
+          ],
+        })
+        break
+      }
+      case "reasoning": {
+        const summary = Array.isArray(item.summary) ? item.summary : []
+        const text = summary
+          .map((s) => (s && typeof s.text === "string" ? s.text : ""))
+          .filter(Boolean)
+          .join("\n")
+        messages.push({
+          role: "assistant",
+          content: [{ type: "thinking", thinking: text } as ContentBlock],
+        })
+        break
+      }
+      default: {
+        // 未知条目类型：渲染成文本块，保证可见、不丢数据
+        messages.push({
+          role: "unknown",
+          content: [{ type: "text", text: JSON.stringify(item) }],
+        })
+        break
+      }
+    }
+  }
+  return { messages, tools }
 }
 
 export function PayloadPanel({
@@ -57,6 +250,8 @@ export function PayloadPanel({
   let messages: ChatMessage[] | null = null
   let systemBlocks: Array<{ text: string }> | null = null
   let tools: unknown = null
+  // 从 Responses API additional_tools 条目里抽出���工具，稍后与顶层 tools 合并。
+  let extractedTools: unknown[] | null = null
 
   if (isValidJson && parsedJson && typeof parsedJson === "object") {
     const obj = parsedJson as Record<string, unknown>
@@ -64,7 +259,15 @@ export function PayloadPanel({
     if (Array.isArray(obj.messages)) {
       messages = obj.messages as ChatMessage[]
     } else if (Array.isArray(obj.input)) {
-      messages = obj.input as ChatMessage[]
+      const inputArr = obj.input as ResponsesItem[]
+      if (isResponsesApiInput(inputArr)) {
+        const norm = normalizeResponsesApiInput(inputArr)
+        messages = norm.messages
+        if (norm.tools.length > 0) extractedTools = norm.tools
+      } else {
+        // 非 Responses API 的 input 数组：保留旧行为，原样当作 messages。
+        messages = inputArr as unknown as ChatMessage[]
+      }
     }
 
     if (typeof obj.system === "string") {
@@ -83,8 +286,10 @@ export function PayloadPanel({
       systemBlocks = [{ text: obj.instructions }]
     }
 
-    if (Array.isArray(obj.tools) && obj.tools.length > 0) {
-      tools = obj.tools
+    const topTools =
+      Array.isArray(obj.tools) && obj.tools.length > 0 ? obj.tools : null
+    if (topTools || (extractedTools && extractedTools.length > 0)) {
+      tools = [...(topTools ?? []), ...(extractedTools ?? [])]
     }
   }
 
@@ -263,7 +468,7 @@ function ToolsView({ tools }: { tools: Array<Record<string, unknown>> }) {
           const rawDesc = fn?.description ?? tool.description
           const description = typeof rawDesc === "string" ? rawDesc : ""
           const schema =
-            fn?.parameters ?? tool.input_schema ?? null
+            fn?.parameters ?? tool.input_schema ?? tool.parameters ?? null
 
           return (
             <ToolRow

@@ -895,6 +895,7 @@ export default {
     loadMore: "Load more ({{count}})",
     noMessages: "No messages to display",
     thinking: "Thinking",
+    reasoningHidden: "Reasoning content is encrypted or unavailable",
     toolCallId: "Call ID",
     toolResult: "Tool result",
     toolResultError: "Tool error",

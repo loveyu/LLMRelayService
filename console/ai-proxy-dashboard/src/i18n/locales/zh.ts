@@ -895,6 +895,7 @@ export default {
     loadMore: "加载更多 ({{count}} 条)",
     noMessages: "没有可显示的对话消息",
     thinking: "思考中",
+    reasoningHidden: "推理内容已加密或不支持展示",
     toolCallId: "调用 ID",
     toolResult: "工具结果",
     toolResultError: "工具错误",

@@ -16,20 +16,22 @@ import { useIsMobile } from "@/hooks/use-is-mobile"
 import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
-type ChatMessage = {
+export type ChatMessage = {
   role: string
   content: unknown
   name?: string
 }
 
-type ContentBlock = {
+export type ContentBlock = {
   type: string
   text?: string
   thinking?: string
   signature?: string
   name?: string
   id?: string
-  input?: Record<string, unknown>
+  // Anthropic tool_use 是对象；OpenAI Responses API（Codex）的 custom_tool_call.input
+  // 是字符串（如 exec 工具的 JS 代码），故同时兼容两种形态。
+  input?: Record<string, unknown> | string
   content?: string | Array<{ type: string; text?: string }>
   tool_use_id?: string
   is_error?: boolean
@@ -58,6 +60,8 @@ export function extractMessageText(content: unknown): string {
 
 const ROLE_LABELS: Record<string, string> = {
   system: "system",
+  // OpenAI 用 developer 角色承载系统级指令（Responses API / Codex 常见），按 system 样式渲染。
+  developer: "developer",
   user: "user",
   assistant: "assistant",
   tool: "tool",
@@ -189,8 +193,11 @@ function TextBubble({
   )
 }
 
-function formatToolInput(input: Record<string, unknown> | undefined): string {
-  if (!input) return ""
+function formatToolInput(input: Record<string, unknown> | string | undefined): string {
+  if (input === undefined || input === null) return ""
+  // 字符串 input（Codex exec 工具的 JS 代码、function_call 的 JSON 参数串）整段直接展示，
+  // 不按 key 截断，避免把一整段代码切碎。
+  if (typeof input === "string") return input
   const lines: string[] = []
   for (const [key, value] of Object.entries(input)) {
     const str = typeof value === "string" ? value : JSON.stringify(value)
@@ -201,6 +208,11 @@ function formatToolInput(input: Record<string, unknown> | undefined): string {
     }
   }
   return lines.join("\n")
+}
+
+function hasToolInput(input: Record<string, unknown> | string | undefined): boolean {
+  if (typeof input === "string") return input.length > 0
+  return !!input && Object.keys(input).length > 0
 }
 
 function ThinkingBlock({
@@ -227,7 +239,9 @@ function ThinkingBlock({
       </button>
       {open && (
         <div className="whitespace-pre-wrap break-words border-t border-amber-400/15 px-3 py-2 text-xs leading-relaxed text-amber-800/80 dark:text-amber-300/80">
-          {thinking}
+          {/* Codex/Responses API 的 reasoning 通常是加密的（encrypted_content），summary 为空， */}
+          {/* 此时展示占位说明，避免出现空白折叠区。 */}
+          {thinking || t("payload.reasoningHidden")}
         </div>
       )}
     </div>
@@ -241,7 +255,7 @@ function ToolUseBlock({
 }: {
   name: string
   id: string
-  input?: Record<string, unknown>
+  input?: Record<string, unknown> | string
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -274,7 +288,7 @@ function ToolUseBlock({
               {t("payload.toolCallId")}: {id}
             </div>
           )}
-          {input && Object.keys(input).length > 0 && (
+          {hasToolInput(input) && (
             <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-muted-foreground">
               {formatToolInput(input)}
             </pre>
@@ -493,7 +507,7 @@ export function ChatDialogViewer({ messages }: { messages: ChatMessage[] }) {
           const role = msg.role || "unknown"
           const isUser = role === "user"
           const isAssistant = role === "assistant"
-          const isSystem = role === "system"
+          const isSystem = role === "system" || role === "developer"
           const isUnknown = !isUser && !isAssistant && !isSystem
 
           const content = msg.content
