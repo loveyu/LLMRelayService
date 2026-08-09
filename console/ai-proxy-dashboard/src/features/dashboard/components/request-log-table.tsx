@@ -17,6 +17,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
+import { cn } from "@/lib/utils"
 import type { ConsoleRequestListItem } from "@/features/dashboard/types"
 import type { RequestSortKey, SortDirection } from "@/features/dashboard/api"
 import {
@@ -91,6 +92,125 @@ function statusStyle(code: number | null): { bg: string; fg: string } {
   return { bg: "var(--lrs-success-bg)", fg: "var(--lrs-success)" }
 }
 
+/** Compact labeled value cell used inside the mobile log cards. */
+function StatCell({
+  label,
+  value,
+  emphasize,
+}: {
+  label: string
+  value: string
+  emphasize?: boolean
+}) {
+  return (
+    <div className="rounded-md bg-muted/40 px-1.5 py-1 text-center">
+      <div className="truncate text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+        {label}
+      </div>
+      <div
+        className={cn(
+          "truncate font-mono text-[11px]",
+          emphasize ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Mobile log card — replaces the cramped multi-column grid on narrow viewports.
+ * Shows the same fields as the desktop row but stacked into a scannable card.
+ */
+function RequestLogMobileCard({
+  item,
+  isSelected,
+  onSelect,
+}: {
+  item: ConsoleRequestListItem
+  isSelected: boolean
+  onSelect: (requestId: string) => void
+}) {
+  const { t } = useTranslation()
+  const timing = item.response_timing ?? {}
+  const st = statusStyle(item.response_status)
+  const cacheHitRate = calculateRequestCacheHitRate(item)
+  const inputTokens = item.response_usage?.uncached_input_tokens ?? item.response_usage?.input_tokens ?? 0
+  const outputTokens = item.response_usage?.output_tokens ?? item.response_usage?.total_output_tokens ?? 0
+  const source = item.client_label ?? item.api_key_name
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(item.request_id)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onSelect(item.request_id)
+        }
+      }}
+      title={`${item.response_status ?? "--"} ${item.response_status_text ?? ""}`.trim()}
+      className="cursor-pointer rounded-lg border border-border/70 border-l-[3px] bg-card px-3 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-accent"
+      style={{
+        borderLeftColor: isSelected ? "var(--primary)" : "transparent",
+        background: isSelected ? "var(--accent)" : undefined,
+      }}
+    >
+      {/* Row 1: status · time · route */}
+      <div className="flex items-center gap-2">
+        <span
+          className="inline-block shrink-0 rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold"
+          style={{ background: st.bg, color: st.fg }}
+        >
+          {getHttpStatusLabel(item.response_status)}
+        </span>
+        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+          {formatTime(item.created_at)}
+        </span>
+        <span className="ml-auto flex min-w-0 items-center gap-1">
+          {item.source_request_type === "connectivity_test" && (
+            <Badge variant="secondary" className="shrink-0 text-[10px]">{t("logTable.testBadge")}</Badge>
+          )}
+          <span className="truncate text-right font-semibold text-foreground">{item.route_prefix}</span>
+        </span>
+      </div>
+
+      {/* Row 2: model · source */}
+      <div className="mt-1 truncate text-[11.5px]">
+        <span className="text-foreground/90">{shortText(item.request_model, 28)}</span>
+        {source ? <span className="text-muted-foreground/80"> · {source}</span> : null}
+      </div>
+
+      {/* Row 3: stat strip */}
+      <div className="mt-2 grid grid-cols-4 gap-1.5">
+        <StatCell
+          label={`${t("logTable.inputLabel")}/${t("logTable.outputLabel")}`}
+          value={`${formatCount(inputTokens)}/${formatCount(outputTokens)}`}
+        />
+        <StatCell
+          label={t("logTable.cacheLabel")}
+          value={cacheHitRate != null ? `${Math.round(cacheHitRate)}%` : "—"}
+        />
+        <StatCell
+          label={t("logTable.firstLabel")}
+          value={formatDuration(timing.first_token_latency_ms)}
+        />
+        <StatCell
+          label={t("logTable.colPrice")}
+          emphasize
+          value={
+            item.response_usage?.cost != null
+              ? `${formatCost(item.response_usage.cost)}${item.response_usage?.estimated ? "*" : ""}`
+              : "—"
+          }
+        />
+      </div>
+    </div>
+  )
+}
+
 export function RequestLogTable({
   variant = "default",
   loading,
@@ -99,6 +219,7 @@ export function RequestLogTable({
   selectedId,
   sortBy = "created_at",
   sortOrder = "desc",
+  isMobile = false,
   onSort,
   onSelect,
   onClearFilters,
@@ -113,6 +234,7 @@ export function RequestLogTable({
   selectedId: string | null
   sortBy?: RequestSortKey
   sortOrder?: SortDirection
+  isMobile?: boolean
   onSort: (sortBy: RequestSortKey, sortOrder: SortDirection) => void
   onSelect: (requestId: string) => void
   onClearFilters?: () => void
@@ -135,54 +257,65 @@ export function RequestLogTable({
     onSort(nextKey, "desc")
   }
 
-  // Compact 7-column layout per LRS Clear 风格五 design spec:
-  // 时间 | Key | 渠道 / 模型 | 状态 | 首Token | Tokens | Cache
+  // Compact layout per LRS Clear 风格五 design spec.
+  // Desktop (≥ lg): 7-column grid table — 时间 | Key | 渠道/模型 | 状态 | 首 | Tokens | Cache | 价格
+  // Mobile (< lg): stacked scannable cards (no table) for narrow viewports.
   if (variant === "compact") {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        {/* Header row */}
-        <div
-          className="grid shrink-0 grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border px-3 py-2 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground sm:grid-cols-[60px_78px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
-        >
-          <span>
-            <SortButton
-              label={t("logTable.colTime")}
-              active={sortBy === "created_at"}
-              direction={sortOrder}
-              onClick={() => toggleSort("created_at")}
-            />
-          </span>
-          <span className="hidden sm:block">{t("logTable.colSource")}</span>
-          <span>{t("logTable.colRoute")}</span>
-          <span>
-            <SortButton
-              label={t("logTable.colStatus")}
-              active={sortBy === "response_status"}
-              direction={sortOrder}
-              onClick={() => toggleSort("response_status")}
-            />
-          </span>
-          <span className="hidden sm:block">{t("logTable.firstLabel")}</span>
-          <span>
-            <SortButton
-              label={t("logTable.colTokens")}
-              active={sortBy === "tokens"}
-              direction={sortOrder}
-              onClick={() => toggleSort("tokens")}
-            />
-          </span>
-          <span className="hidden text-right sm:block">{t("logTable.colCacheHitRate")}</span>
-          <span className="hidden text-right sm:block">{t("logTable.colPrice")}</span>
-        </div>
+        {/* Header row — desktop only; mobile cards have no column header */}
+        {!isMobile && (
+          <div
+            className="grid shrink-0 grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border px-3 py-2 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground sm:grid-cols-[60px_78px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
+          >
+            <span>
+              <SortButton
+                label={t("logTable.colTime")}
+                active={sortBy === "created_at"}
+                direction={sortOrder}
+                onClick={() => toggleSort("created_at")}
+              />
+            </span>
+            <span className="hidden sm:block">{t("logTable.colSource")}</span>
+            <span>{t("logTable.colRoute")}</span>
+            <span>
+              <SortButton
+                label={t("logTable.colStatus")}
+                active={sortBy === "response_status"}
+                direction={sortOrder}
+                onClick={() => toggleSort("response_status")}
+              />
+            </span>
+            <span className="hidden sm:block">{t("logTable.firstLabel")}</span>
+            <span>
+              <SortButton
+                label={t("logTable.colTokens")}
+                active={sortBy === "tokens"}
+                direction={sortOrder}
+                onClick={() => toggleSort("tokens")}
+              />
+            </span>
+            <span className="hidden text-right sm:block">{t("logTable.colCacheHitRate")}</span>
+            <span className="hidden text-right sm:block">{t("logTable.colPrice")}</span>
+          </div>
+        )}
 
         {/* Body */}
         <div className="relative min-h-0 flex-1 overflow-auto">
           {loading && !requests.length ? (
-            <div className="space-y-1 p-4">
-              {Array.from({ length: 8 }).map((_, index) => (
-                <Skeleton key={index} className="h-10 w-full rounded-md" />
-              ))}
-            </div>
+            isMobile ? (
+              <div className="space-y-2 p-3">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <Skeleton key={index} className="h-[104px] w-full rounded-lg" />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-1 p-4">
+                {Array.from({ length: 8 }).map((_, index) => (
+                  <Skeleton key={index} className="h-10 w-full rounded-md" />
+                ))}
+              </div>
+            )
           ) : requests.length ? (
             <div className={refreshing ? "opacity-60" : ""}>
               {refreshing && (
@@ -190,87 +323,100 @@ export function RequestLogTable({
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 </div>
               )}
-              {requests.map((item) => {
-                const timing = item.response_timing ?? {}
-                const isSelected = item.request_id === selectedId
-                const isHovered = hoveredId === item.request_id
-                const cacheHitRate = calculateRequestCacheHitRate(item)
-                const inputTokens = item.response_usage?.uncached_input_tokens ?? item.response_usage?.input_tokens ?? 0
-                const outputTokens = item.response_usage?.output_tokens ?? item.response_usage?.total_output_tokens ?? 0
-                const st = statusStyle(item.response_status)
+              {isMobile ? (
+                <div className="space-y-2 p-3">
+                  {requests.map((item) => (
+                    <RequestLogMobileCard
+                      key={item.request_id}
+                      item={item}
+                      isSelected={item.request_id === selectedId}
+                      onSelect={onSelect}
+                    />
+                  ))}
+                </div>
+              ) : (
+                requests.map((item) => {
+                  const timing = item.response_timing ?? {}
+                  const isSelected = item.request_id === selectedId
+                  const isHovered = hoveredId === item.request_id
+                  const cacheHitRate = calculateRequestCacheHitRate(item)
+                  const inputTokens = item.response_usage?.uncached_input_tokens ?? item.response_usage?.input_tokens ?? 0
+                  const outputTokens = item.response_usage?.output_tokens ?? item.response_usage?.total_output_tokens ?? 0
+                  const st = statusStyle(item.response_status)
 
-                return (
-                  <div
-                    key={item.request_id}
-                    onClick={() => onSelect(item.request_id)}
-                    onMouseEnter={() => setHoveredId(item.request_id)}
-                    onMouseLeave={() => setHoveredId(null)}
-                    className="grid cursor-pointer grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border/50 border-l-[3px] px-3 py-2.5 text-xs transition-colors sm:grid-cols-[60px_78px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
-                    style={{
-                      borderLeftColor: isSelected ? "var(--primary)" : isHovered ? "var(--accent-foreground)" : "transparent",
-                      background: isSelected ? "var(--accent)" : isHovered ? "var(--accent/50)" : "transparent",
-                    }}
-                  >
-                    {/* 时间 */}
-                    <span className="font-mono text-[11px] text-muted-foreground">
-                      {formatTime(item.created_at)}
-                    </span>
-
-                    {/* Key */}
-                    <span
-                      className="hidden truncate text-[11.5px] text-muted-foreground sm:block"
-                      title={item.client_label ?? item.api_key_name ?? ""}
+                  return (
+                    <div
+                      key={item.request_id}
+                      onClick={() => onSelect(item.request_id)}
+                      onMouseEnter={() => setHoveredId(item.request_id)}
+                      onMouseLeave={() => setHoveredId(null)}
+                      className="grid cursor-pointer grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border/50 border-l-[3px] px-3 py-2.5 text-xs transition-colors sm:grid-cols-[60px_78px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
+                      style={{
+                        borderLeftColor: isSelected ? "var(--primary)" : isHovered ? "var(--accent-foreground)" : "transparent",
+                        background: isSelected ? "var(--accent)" : isHovered ? "var(--accent/50)" : "transparent",
+                      }}
                     >
-                      {item.client_label ?? item.api_key_name ?? "—"}
-                    </span>
-
-                    {/* 渠道 / 模型 */}
-                    <span className="truncate">
-                      {item.source_request_type === "connectivity_test" && (
-                        <Badge variant="secondary" className="mr-1 text-[10px]">{t("logTable.testBadge")}</Badge>
-                      )}
-                      <span className="font-semibold text-foreground">{item.route_prefix}</span>
-                      <span className="ml-1 text-[11px] text-muted-foreground/80">· {shortText(item.request_model, 22)}</span>
-                    </span>
-
-                    {/* 状态 */}
-                    <span>
-                      <span
-                        className="inline-block rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold"
-                        style={{ background: st.bg, color: st.fg }}
-                        title={`${item.response_status ?? "--"} ${item.response_status_text ?? ""}`}
-                      >
-                        {getHttpStatusLabel(item.response_status)}
+                      {/* 时间 */}
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {formatTime(item.created_at)}
                       </span>
-                    </span>
 
-                    {/* 首Token */}
-                    <span className="hidden font-mono text-[11.5px] text-foreground sm:block">
-                      {formatDuration(timing.first_token_latency_ms)}
-                    </span>
+                      {/* Key */}
+                      <span
+                        className="hidden truncate text-[11.5px] text-muted-foreground sm:block"
+                        title={item.client_label ?? item.api_key_name ?? ""}
+                      >
+                        {item.client_label ?? item.api_key_name ?? "—"}
+                      </span>
 
-                    {/* Tokens: 入/出 */}
-                    <span className="font-mono text-[11px] text-muted-foreground">
-                      {formatCount(inputTokens)}/{formatCount(outputTokens)}
-                    </span>
+                      {/* 渠道 / 模型 */}
+                      <span className="truncate">
+                        {item.source_request_type === "connectivity_test" && (
+                          <Badge variant="secondary" className="mr-1 text-[10px]">{t("logTable.testBadge")}</Badge>
+                        )}
+                        <span className="font-semibold text-foreground">{item.route_prefix}</span>
+                        <span className="ml-1 text-[11px] text-muted-foreground/80">· {shortText(item.request_model, 22)}</span>
+                      </span>
 
-                    {/* Cache */}
-                    <span className="hidden text-right font-mono text-[11px] text-muted-foreground sm:block">
-                      {cacheHitRate != null ? `${Math.round(cacheHitRate)}%` : "—"}
-                    </span>
+                      {/* 状态 */}
+                      <span>
+                        <span
+                          className="inline-block rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold"
+                          style={{ background: st.bg, color: st.fg }}
+                          title={`${item.response_status ?? "--"} ${item.response_status_text ?? ""}`}
+                        >
+                          {getHttpStatusLabel(item.response_status)}
+                        </span>
+                      </span>
 
-                    {/* 价格 */}
-                    <span
-                      className="hidden text-right font-mono text-[11px] text-foreground sm:block"
-                      title={item.response_usage?.estimated ? t("logTable.priceEstimatedHint") : undefined}
-                    >
-                      {item.response_usage?.cost != null
-                        ? `${formatCost(item.response_usage.cost)}${item.response_usage?.estimated ? "*" : ""}`
-                        : "—"}
-                    </span>
-                  </div>
-                )
-              })}
+                      {/* 首Token */}
+                      <span className="hidden font-mono text-[11.5px] text-foreground sm:block">
+                        {formatDuration(timing.first_token_latency_ms)}
+                      </span>
+
+                      {/* Tokens: 入/出 */}
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {formatCount(inputTokens)}/{formatCount(outputTokens)}
+                      </span>
+
+                      {/* Cache */}
+                      <span className="hidden text-right font-mono text-[11px] text-muted-foreground sm:block">
+                        {cacheHitRate != null ? `${Math.round(cacheHitRate)}%` : "—"}
+                      </span>
+
+                      {/* 价格 */}
+                      <span
+                        className="hidden text-right font-mono text-[11px] text-foreground sm:block"
+                        title={item.response_usage?.estimated ? t("logTable.priceEstimatedHint") : undefined}
+                      >
+                        {item.response_usage?.cost != null
+                          ? `${formatCost(item.response_usage.cost)}${item.response_usage?.estimated ? "*" : ""}`
+                          : "—"}
+                      </span>
+                    </div>
+                  )
+                })
+              )}
             </div>
           ) : (
             <Empty className="m-4 border-border/70">

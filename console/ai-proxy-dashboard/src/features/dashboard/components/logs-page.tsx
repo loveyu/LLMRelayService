@@ -296,6 +296,7 @@ export function LogsPage({
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
           <RequestLogTable
             variant="compact"
+            isMobile={isMobile}
             loading={loading}
             refreshing={refreshing}
             requests={requests}
