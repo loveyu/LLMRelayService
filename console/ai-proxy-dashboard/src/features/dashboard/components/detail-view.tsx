@@ -123,6 +123,9 @@ export function DetailView({
   error: string
 }) {
   const { t } = useTranslation()
+  // 注意：所有 hook 必须在任何 early return 之前调用，否则 detail 由非空变空时
+  // hook 数量变化会触发 "Rendered fewer hooks than expected"，整棵树卸载白屏。
+  const isMobile = useIsMobile()
 
   // Empty state
   if (!detail) {
@@ -164,8 +167,6 @@ export function DetailView({
     ? 0
     : Number(usage.cache_creation_input_tokens ?? usage.total_cache_creation_tokens ?? 0)
   const costRows = getCostMetricRows(usage, record.request_model, record.upstream_type)
-
-  const isMobile = useIsMobile()
 
   // Shared blocks — rendered by both the desktop pinned layout and the mobile
   // single-scroll layout, so the two stay in sync without duplicating content.
