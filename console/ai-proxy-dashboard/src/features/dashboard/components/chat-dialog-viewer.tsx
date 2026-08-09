@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { ChevronDown, ChevronRight, ChevronUp, Wrench } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useIsMobile } from "@/hooks/use-is-mobile"
 import { cn } from "@/lib/utils"
 
 type ChatMessage = {
@@ -49,6 +50,27 @@ const ROLE_LABELS: Record<string, string> = {
   user: "user",
   assistant: "assistant",
   tool: "tool",
+}
+
+// 聊天气泡样式：user 右对齐主色圆角泡、assistant 左对齐卡片圆角泡、system 居中小泡、
+// 其余未知角色用等宽小卡片。圆角非对称（rounded-tr-md / rounded-tl-md）模拟气泡"尖角"。
+function textBubbleClass(
+  isUser: boolean,
+  isAssistant: boolean,
+  isSystem: boolean,
+  isUnknown: boolean,
+) {
+  return cn(
+    "w-full whitespace-pre-wrap break-words px-3.5 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]",
+    isUser &&
+      "rounded-2xl rounded-tr-md border border-primary/25 bg-primary/12 text-foreground",
+    isAssistant &&
+      "rounded-2xl rounded-tl-md border border-border/60 bg-muted text-foreground shadow-sm",
+    isSystem &&
+      "rounded-xl bg-secondary/40 text-xs italic text-secondary-foreground",
+    isUnknown &&
+      "rounded-lg border-l-2 border-secondary/40 bg-secondary/10 font-mono text-xs text-secondary-foreground",
+  )
 }
 
 function formatToolInput(input: Record<string, unknown> | undefined): string {
@@ -227,17 +249,7 @@ function renderMessageBlocks(
         return (
           <div
             key={key}
-            className={cn(
-              "w-full whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-relaxed",
-              isUser &&
-                "border-r-2 border-primary bg-primary/10 text-foreground",
-              isAssistant &&
-                "border-l-2 border-transparent bg-muted text-foreground",
-              isSystem &&
-                "bg-secondary/15 text-xs italic text-secondary-foreground",
-              isUnknown &&
-                "border-l-2 border-secondary/40 bg-secondary/10 font-mono text-xs text-secondary-foreground",
-            )}
+            className={textBubbleClass(isUser, isAssistant, isSystem, isUnknown)}
           >
             {block.text || ""}
           </div>
@@ -289,6 +301,7 @@ function renderMessageBlocks(
 
 export function ChatDialogViewer({ messages }: { messages: ChatMessage[] }) {
   const { t } = useTranslation()
+  const isMobile = useIsMobile()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [visibleCount, setVisibleCount] = useState(10)
   const prevScrollHeightRef = useRef(0)
@@ -305,13 +318,15 @@ export function ChatDialogViewer({ messages }: { messages: ChatMessage[] }) {
   }, [])
 
   useEffect(() => {
+    // 仅桌面端走内部滚动；移动端随 Sheet 页面滚动，无需手动定位。
+    if (isMobile) return
     if (prevScrollHeightRef.current > 0 && scrollRef.current) {
       scrollRef.current.scrollTop =
         scrollRef.current.scrollHeight - prevScrollHeightRef.current
     } else {
       scrollToBottom()
     }
-  }, [visibleCount, scrollToBottom])
+  }, [visibleCount, scrollToBottom, isMobile])
 
   const handleLoadMore = useCallback(() => {
     if (scrollRef.current) {
@@ -320,17 +335,35 @@ export function ChatDialogViewer({ messages }: { messages: ChatMessage[] }) {
     setVisibleCount((prev) => Math.min(prev + 10, total))
   }, [total])
 
+  // 桌面端：固定高度的卡片框 + 内部滚动；移动端：去掉框与内部滚动，随页面流式排布，
+  // 这样在移动端更像一条可自然上下滑动的聊天记录，而不是嵌套滚动框。
   return (
-    <div className="flex min-h-[24rem] flex-col border bg-muted/30">
+    <div
+      className={
+        isMobile
+          ? "flex flex-col"
+          : "flex min-h-[24rem] flex-col border bg-muted/30"
+      }
+    >
       {hasMore && (
-        <div className="flex justify-center border-b px-4 py-2">
+        <div
+          className={cn(
+            "flex justify-center px-4 py-2",
+            !isMobile && "border-b",
+          )}
+        >
           <Button variant="ghost" size="sm" onClick={handleLoadMore}>
             <ChevronUp data-icon="inline-start" />
             {t("payload.loadMore", { count: total - visibleCount })}
           </Button>
         </div>
       )}
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-auto px-4 py-4">
+      <div
+        ref={scrollRef}
+        className={
+          isMobile ? "space-y-3 py-1" : "flex-1 space-y-3 overflow-auto px-4 py-4"
+        }
+      >
         {visible.map((msg, idx) => {
           const role = msg.role || "unknown"
           const isUser = role === "user"
@@ -345,7 +378,7 @@ export function ChatDialogViewer({ messages }: { messages: ChatMessage[] }) {
             <div
               key={`${total - visibleCount + idx}-${role}`}
               className={cn(
-                "flex flex-col gap-1",
+                "flex flex-col gap-0.5",
                 isUser && "items-end",
                 isAssistant && "items-start",
                 isSystem && "items-center",
@@ -358,25 +391,20 @@ export function ChatDialogViewer({ messages }: { messages: ChatMessage[] }) {
               </span>
               <div
                 className={cn(
-                  "max-w-[85%] space-y-1.5",
-                  isUser && "flex flex-col items-end",
-                  isAssistant && "flex flex-col items-start",
+                  "min-w-0 space-y-1.5",
+                  isUser && "max-w-[85%] flex flex-col items-end",
+                  isAssistant && "max-w-[85%] flex flex-col items-start",
                   isSystem && "max-w-[92%]",
                   isUnknown && "max-w-[92%]",
                 )}
               >
                 {typeof content === "string" ? (
                   <div
-                    className={cn(
-                      "w-full whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-relaxed",
-                      isUser &&
-                        "border-r-2 border-primary bg-primary/10 text-foreground",
-                      isAssistant &&
-                        "border-l-2 border-transparent bg-muted text-foreground",
-                      isSystem &&
-                        "bg-secondary/15 text-xs italic text-secondary-foreground",
-                      isUnknown &&
-                        "border-l-2 border-secondary/40 bg-secondary/10 font-mono text-xs text-secondary-foreground",
+                    className={textBubbleClass(
+                      isUser,
+                      isAssistant,
+                      isSystem,
+                      isUnknown,
                     )}
                   >
                     {content || (
@@ -395,9 +423,12 @@ export function ChatDialogViewer({ messages }: { messages: ChatMessage[] }) {
                 ) : (
                   <div
                     className={cn(
-                      "w-full whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-relaxed",
-                      isUnknown &&
-                        "border-l-2 border-secondary/40 bg-secondary/10 font-mono text-xs text-secondary-foreground",
+                      textBubbleClass(
+                        isUser,
+                        isAssistant,
+                        isSystem,
+                        isUnknown,
+                      ),
                     )}
                   >
                     {content === null || content === undefined ? (
