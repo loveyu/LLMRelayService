@@ -79,12 +79,27 @@ struct TestOutcome {
     result: TestResult,
     /// 是否走了流式重试（决定日志里 has_streaming_content）。
     is_stream: bool,
+    /// 上游响应头快照，写响应日志时填 response_headers（连接失败/超时为空对象）。
+    response_headers: Value,
 }
 
 impl TestOutcome {
-    fn new(result: TestResult, is_stream: bool) -> Self {
-        Self { result, is_stream }
+    fn new(result: TestResult, is_stream: bool, response_headers: Value) -> Self {
+        Self { result, is_stream, response_headers }
     }
+}
+
+/// 把上游响应头转成 JSON 对象（key→字符串值；非 UTF-8 值按空串兜底），
+/// 与真实转发路径（proxy.rs）落库的 response_headers 结构保持一致。
+fn header_map_to_json(headers: &HeaderMap) -> Value {
+    let mut map = serde_json::Map::new();
+    for (name, value) in headers.iter() {
+        map.insert(
+            name.as_str().to_string(),
+            Value::String(value.to_str().unwrap_or("").to_string()),
+        );
+    }
+    Value::Object(map)
 }
 
 /// 一次探测的结局：要么给出最终结果，要么提示需要切换为流式重试。
@@ -319,6 +334,7 @@ async fn handle_upstream_response(
     is_anthropic: bool,
 ) -> ProbeOutcome {
     let status_code = resp.status().as_u16();
+    let hdrs = header_map_to_json(resp.headers());
 
     if resp.status().is_success() {
         let data: Value = resp.json().await.unwrap_or(Value::Null);
@@ -334,6 +350,7 @@ async fn handle_upstream_response(
                 test_model,
             ),
             false,
+            hdrs,
         ));
     }
 
@@ -368,6 +385,7 @@ async fn handle_upstream_response(
     ProbeOutcome::Final(TestOutcome::new(
         TestResult::new("error", status_code, friendly, latency_ms, test_model, raw),
         false,
+        hdrs,
     ))
 }
 
@@ -379,6 +397,7 @@ async fn handle_stream_response(
     is_anthropic: bool,
 ) -> TestOutcome {
     let status_code = resp.status().as_u16();
+    let hdrs = header_map_to_json(resp.headers());
 
     if !resp.status().is_success() {
         let error_text = resp.text().await.unwrap_or_default();
@@ -399,6 +418,7 @@ async fn handle_stream_response(
         return TestOutcome::new(
             TestResult::new("error", status_code, friendly, latency_ms, test_model, raw),
             true,
+            hdrs,
         );
     }
 
@@ -438,6 +458,7 @@ async fn handle_stream_response(
             test_model,
         ),
         true,
+        hdrs,
     )
 }
 
@@ -685,6 +706,7 @@ fn connection_error(test_model: &str, latency_ms: u128, err: &reqwest::Error) ->
     TestOutcome::new(
         TestResult::new("error", 0, format!("连接失败: {err}"), latency_ms, test_model, None),
         false,
+        json!({}),
     )
 }
 
@@ -699,6 +721,7 @@ fn timeout_error(test_model: &str) -> TestOutcome {
             None,
         ),
         false,
+        json!({}),
     )
 }
 
@@ -802,13 +825,14 @@ fn emit_response_log(state: &AppState, request_id: &str, created_at: u64, outcom
     let status = result.status_code;
     let resp_model = result.model.clone();
     let is_stream = outcome.is_stream;
+    let response_headers = outcome.response_headers.clone();
 
     tokio::spawn(async move {
         ipc.send(RustToTsMessage::ResponseLog {
             request_id: rid,
             response_status: status,
             response_status_text: status_text,
-            response_headers: json!({}),
+            response_headers,
             response_body_bytes,
             first_chunk_at: Some(created_at),
             first_token_at: Some(created_at),
