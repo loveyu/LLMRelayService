@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronDown, ChevronRight, ChevronUp, Wrench } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, ChevronUp, Copy, Wrench } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { MarkdownRenderer } from "@/components/ui/markdown"
+import { MarkdownCodeViewer } from "@/components/ui/markdown-code-viewer"
+import { toast } from "@/components/ui/toast"
 import { useIsMobile } from "@/hooks/use-is-mobile"
+import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
 type ChatMessage = {
@@ -54,14 +65,18 @@ const ROLE_LABELS: Record<string, string> = {
 
 // 聊天气泡样式：user 右对齐主色圆角泡、assistant 左对齐卡片圆角泡、system 居中小泡、
 // 其余未知角色用等宽小卡片。圆角非对称（rounded-tr-md / rounded-tl-md）模拟气泡"尖角"。
+// wrap=true（默认）保留 whitespace-pre-wrap，适合纯文本；Markdown 渲染时传 false，
+// 让 react-markdown 自己控制换行（否则 pre-wrap 会让 Markdown 的软换行变成硬换行）。
 function textBubbleClass(
   isUser: boolean,
   isAssistant: boolean,
   isSystem: boolean,
   isUnknown: boolean,
+  wrap = true,
 ) {
   return cn(
-    "w-full whitespace-pre-wrap break-words px-3.5 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]",
+    "w-full px-3.5 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]",
+    wrap && "whitespace-pre-wrap break-words",
     isUser &&
       "rounded-2xl rounded-tr-md border border-primary/25 bg-primary/12 text-foreground",
     isAssistant &&
@@ -70,6 +85,107 @@ function textBubbleClass(
       "rounded-xl bg-secondary/40 text-xs italic text-secondary-foreground",
     isUnknown &&
       "rounded-lg border-l-2 border-secondary/40 bg-secondary/10 font-mono text-xs text-secondary-foreground",
+  )
+}
+
+// 文本气泡右上角菜单：切换 渲染 / 源码（CodeMirror），以及复制原始 Markdown 文本。
+function BubbleMenu({
+  text,
+  mode,
+  setMode,
+}: {
+  text: string
+  mode: "rendered" | "source"
+  setMode: (m: "rendered" | "source") => void
+}) {
+  const { t } = useTranslation()
+  const handleCopy = () => {
+    copyText(text).then((ok) =>
+      ok ? toast.success(t("common.copied")) : toast.error(t("common.copyFailed")),
+    )
+  }
+  return (
+    <div className="absolute right-0 top-0 z-10">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={t("payload.mdMenu")}
+            className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground/50 transition-colors hover:bg-foreground/10 hover:text-foreground"
+          >
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={4} className="min-w-[9rem]">
+          <DropdownMenuItem onClick={() => setMode("rendered")}>
+            <Check
+              className={cn("h-3.5 w-3.5", mode === "rendered" ? "opacity-100" : "opacity-0")}
+            />
+            {t("payload.mdRendered")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setMode("source")}>
+            <Check
+              className={cn("h-3.5 w-3.5", mode === "source" ? "opacity-100" : "opacity-0")}
+            />
+            {t("payload.mdSource")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={handleCopy}>
+            <Copy className="h-3.5 w-3.5" />
+            {t("common.copy")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
+}
+
+// 文本气泡内容：默认 Markdown 渲染（安���），可切到 CodeMirror 源码视图；右上角菜单。
+function MessageText({ text }: { text: string }) {
+  const [mode, setMode] = useState<"rendered" | "source">("rendered")
+  return (
+    <div className="relative">
+      <BubbleMenu text={text} mode={mode} setMode={setMode} />
+      {/* pr-5 给右上角菜单按钮留位，避免第一行文字压到按钮下 */}
+      <div className="pr-5">
+        {mode === "rendered" ? (
+          <MarkdownRenderer text={text} />
+        ) : (
+          <MarkdownCodeViewer value={text} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+// 统一的文本气泡：user / assistant 文本走 Markdown 渲染 + 菜单；system / unknown 保持纯文本。
+function TextBubble({
+  text,
+  isUser,
+  isAssistant,
+  isSystem,
+  isUnknown,
+}: {
+  text: string
+  isUser: boolean
+  isAssistant: boolean
+  isSystem: boolean
+  isUnknown: boolean
+}) {
+  const enableMd = (isUser || isAssistant) && text.length > 0
+  return (
+    <div
+      className={cn(
+        textBubbleClass(isUser, isAssistant, isSystem, isUnknown, !enableMd),
+        enableMd && "relative",
+      )}
+    >
+      {enableMd ? (
+        <MessageText text={text} />
+      ) : (
+        text || <span className="text-muted-foreground">(empty)</span>
+      )}
+    </div>
   )
 }
 
@@ -254,12 +370,14 @@ function renderMessageBlocks(
     switch (block.type) {
       case "text":
         return (
-          <div
+          <TextBubble
             key={key}
-            className={textBubbleClass(isUser, isAssistant, isSystem, isUnknown)}
-          >
-            {block.text || ""}
-          </div>
+            text={block.text || ""}
+            isUser={isUser}
+            isAssistant={isAssistant}
+            isSystem={isSystem}
+            isUnknown={isUnknown}
+          />
         )
       case "thinking":
         return (
@@ -413,18 +531,13 @@ export function ChatDialogViewer({ messages }: { messages: ChatMessage[] }) {
                 )}
               >
                 {typeof content === "string" ? (
-                  <div
-                    className={textBubbleClass(
-                      isUser,
-                      isAssistant,
-                      isSystem,
-                      isUnknown,
-                    )}
-                  >
-                    {content || (
-                      <span className="text-muted-foreground">(empty)</span>
-                    )}
-                  </div>
+                  <TextBubble
+                    text={content}
+                    isUser={isUser}
+                    isAssistant={isAssistant}
+                    isSystem={isSystem}
+                    isUnknown={isUnknown}
+                  />
                 ) : isArrayContent ? (
                   renderMessageBlocks(
                     content as ContentBlock[],
