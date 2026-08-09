@@ -154,7 +154,7 @@ function ToolUseBlock({
       {open && (
         <div className="space-y-1 border-t border-blue-400/15 px-3 py-2">
           {id && (
-            <div className="text-[10px] text-muted-foreground">
+            <div className="break-all font-mono text-[10px] text-muted-foreground">
               {t("payload.toolCallId")}: {id}
             </div>
           )}
@@ -226,9 +226,16 @@ function ToolResultBlock({
         </span>
       </button>
       {open && (
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words border-t border-inherit px-3 py-2 font-mono text-xs leading-relaxed text-muted-foreground">
-          {text}
-        </pre>
+        <div className="border-t border-inherit px-3 py-2">
+          {toolUseId && (
+            <div className="mb-1.5 break-all font-mono text-[10px] text-muted-foreground">
+              {t("payload.toolCallId")}: {toolUseId}
+            </div>
+          )}
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-muted-foreground">
+            {text}
+          </pre>
+        </div>
       )}
     </div>
   )
