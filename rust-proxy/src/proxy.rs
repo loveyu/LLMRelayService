@@ -134,6 +134,13 @@ pub async fn proxy_handler(
         }
     }
 
+    // Authoritative provider type for this request (from the resolved initial route).
+    // All failover fallbacks are constrained to this type so an Anthropic request can
+    // never be forwarded to an OpenAI upstream (whose body format is incompatible) —
+    // forwarding across types is always invalid, and the last same-type upstream's
+    // error is what we want to surface to the client when everything fails.
+    let request_type = initial_route.upstream_type.clone();
+
     // Collect all candidate routes (initial + potential fallbacks)
     let mut active_routes = vec![initial_route.clone()];
     let mut attempt_index: usize = 0;
@@ -411,7 +418,7 @@ pub async fn proxy_handler(
                         &state,
                         pathname,
                         search,
-                        forced_type.clone(),
+                        request_type.clone(),
                     ) {
                         attempt_index += 1;
                         retry_count = 0;
@@ -477,7 +484,7 @@ pub async fn proxy_handler(
                         &state,
                         pathname,
                         search,
-                        forced_type.clone(),
+                        request_type.clone(),
                     ) {
                         attempt_index += 1;
                         retry_count = 0;
@@ -520,7 +527,7 @@ pub async fn proxy_handler(
                         &state,
                         pathname,
                         search,
-                        forced_type.clone(),
+                        request_type.clone(),
                     ) {
                         attempt_index += 1;
                         retry_count = 0;
@@ -552,7 +559,7 @@ fn try_add_fallbacks(
     state: &AppState,
     pathname: &str,
     search: &str,
-    forced_type: Option<crate::config::UpstreamType>,
+    request_type: crate::config::UpstreamType,
 ) -> bool {
     use crate::config::{ModelFallbackMode, RoutingVisibility};
 
@@ -569,7 +576,7 @@ fn try_add_fallbacks(
         pathname,
         search,
         model,
-        forced_type.clone(),
+        Some(request_type.clone()),
         &rt.providers,
         &rt.aliases,
     );
@@ -582,7 +589,7 @@ fn try_add_fallbacks(
             pathname,
             search,
             fallback_model,
-            forced_type.clone(),
+            Some(request_type.clone()),
             &rt.providers,
             &rt.aliases,
         ) {
@@ -592,36 +599,20 @@ fn try_add_fallbacks(
         }
     }
 
-    // 3) Site policy: any_model
+    // 3) Site policy: any_model — still constrained to the request's provider type:
+    // an Anthropic-format request must never be forwarded to an OpenAI upstream (and
+    // vice versa); the body format is incompatible, so such forwarding is always invalid.
     if policy.model_fallback_mode == ModelFallbackMode::AnyModel {
         for (name, entry) in rt.providers.iter() {
             if entry.enabled
+                && entry.upstream_type == request_type
                 && entry.routing_visibility.as_ref() != Some(&RoutingVisibility::ExplicitOnly)
                 && !existing.contains(name)
             {
-                candidates.push(RouteResult {
-                    channel_name: name.clone(),
-                    upstream_type: entry.upstream_type.clone(),
-                    target_url: format!(
-                        "{}{}{}",
-                        entry.target_base_url.trim_end_matches('/'),
-                        pathname,
-                        if search.is_empty() { "" } else { "?" }
-                    ),
-                    system_prompt: entry.system_prompt.clone(),
-                    auth_header: entry.auth.as_ref().map(|a| match a.header {
-                        crate::config::RouteAuthHeader::XApiKey => "x-api-key".to_string(),
-                        crate::config::RouteAuthHeader::Authorization => {
-                            "authorization".to_string()
-                        }
-                    }),
-                    auth_value: entry.auth.as_ref().map(|a| a.value.clone()),
-                    claude_code_compat: entry.claude_code_compat,
-                    resolved_model: None,
-                    virtual_model: None,
-                    return_real_model: false,
-                    responses_mode: entry.responses_mode.clone(),
-                });
+                // Reuse the canonical builder so the type-forced prefix is stripped and
+                // the path/search are normalized identically to the initial + same-model
+                // fallback paths (avoids `.../anthropic/anthropic/...` doubling).
+                candidates.push(routing::build_route_result(name, entry, pathname, search));
             }
         }
     }

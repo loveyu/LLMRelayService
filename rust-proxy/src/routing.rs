@@ -52,6 +52,21 @@ pub fn parse_type_forced_prefix(pathname: &str) -> (String, Option<UpstreamType>
     }
 }
 
+/// Strip a leading `/openai/` or `/anthropic/` type-forced prefix from `path`,
+/// returning a slice that begins at the following `/`. Returns the original
+/// slice untouched when no such prefix is present. Used to normalize paths at
+/// the URL-building boundary so callers that forward the raw request pathname
+/// (e.g. failover fallbacks) cannot double the prefix onto targetBaseUrl.
+fn strip_type_forced_prefix(path: &str) -> &str {
+    if let Some(rest) = path.strip_prefix("/openai") {
+        rest
+    } else if let Some(rest) = path.strip_prefix("/anthropic") {
+        rest
+    } else {
+        path
+    }
+}
+
 /// Try to match an explicit `/providers/{channelName}/...` path.
 pub fn resolve_explicit_route(
     pathname: &str,
@@ -181,12 +196,20 @@ fn resolve_provider_by_ref<'a>(
     providers.values().find(|e| e.provider_uuid.as_deref() == Some(reference))
 }
 
-fn build_route_result(
+pub fn build_route_result(
     channel_name: &str,
     entry: &ConfigEntry,
     path: &str,
     search: &str,
 ) -> RouteResult {
+    // Normalize any type-forced prefix (`/openai/` or `/anthropic/`) off the path before
+    // joining it onto the provider's targetBaseUrl. The initial request handler already
+    // strips this prefix, but failover/fallback callers forward the raw request pathname;
+    // without stripping here, an Anthropic provider whose targetBaseUrl already ends with
+    // `/anthropic` (e.g. https://open.bigmodel.cn/api/anthropic) would be forwarded to
+    // `.../anthropic/anthropic/v1/messages` and 404 upstream.
+    let path = strip_type_forced_prefix(path);
+
     // TS behavior: for OpenAI type, strip /v1 prefix so the provider's
     // targetBaseUrl (which includes /v1) doesn't double up.
     // For Anthropic, pass path through unchanged.
@@ -255,4 +278,134 @@ fn find_routes_by_model(
 fn deduplicate_route_results(results: &mut Vec<RouteResult>) {
     let mut seen = std::collections::HashSet::new();
     results.retain(|r| seen.insert(r.channel_name.clone()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ConfigEntry, ModelConfig};
+
+    fn anthropic_entry(base: &str, model: &str) -> ConfigEntry {
+        ConfigEntry {
+            upstream_type: UpstreamType::Anthropic,
+            target_base_url: base.to_string(),
+            system_prompt: None,
+            auth: None,
+            models: Some(vec![ModelConfig {
+                model: model.to_string(),
+                context: None,
+                extra: serde_json::Map::new(),
+            }]),
+            priority: 0,
+            enabled: true,
+            routing_visibility: None,
+            responses_mode: None,
+            extra_fields: None,
+            provider_uuid: None,
+            auto_sync_models: false,
+            claude_code_compat: false,
+        }
+    }
+
+    fn openai_entry(base: &str, model: &str) -> ConfigEntry {
+        ConfigEntry {
+            upstream_type: UpstreamType::OpenAI,
+            target_base_url: base.to_string(),
+            system_prompt: None,
+            auth: None,
+            models: Some(vec![ModelConfig {
+                model: model.to_string(),
+                context: None,
+                extra: serde_json::Map::new(),
+            }]),
+            priority: 0,
+            enabled: true,
+            routing_visibility: None,
+            responses_mode: None,
+            extra_fields: None,
+            provider_uuid: None,
+            auto_sync_models: false,
+            claude_code_compat: false,
+        }
+    }
+
+    /// Regression: `/anthropic/` type-forced prefix must not be doubled onto an
+    /// Anthropic provider whose targetBaseUrl already ends with `/anthropic`.
+    /// This previously produced `.../anthropic/anthropic/v1/messages` and a 404.
+    #[test]
+    fn anthropic_type_forced_prefix_not_doubled() {
+        let mut providers = std::collections::HashMap::new();
+        providers.insert(
+            "bigmodel-linhai-a".to_string(),
+            anthropic_entry("https://open.bigmodel.cn/api/anthropic", "glm-5.2"),
+        );
+        let aliases = std::collections::HashMap::new();
+
+        // (a) initial route: caller passes the already-stripped path
+        let (stripped, forced) = parse_type_forced_prefix("/anthropic/v1/messages");
+        let routes = resolve_routes_by_model(
+            &stripped,
+            "beta=true",
+            "glm-5.2",
+            forced,
+            &providers,
+            &aliases,
+        );
+        assert_eq!(
+            routes[0].target_url,
+            "https://open.bigmodel.cn/api/anthropic/v1/messages?beta=true"
+        );
+
+        // (b) failover/fallback path: caller forwards the RAW prefixed pathname —
+        // build_route_result must still strip the prefix.
+        let routes_raw = resolve_routes_by_model(
+            "/anthropic/v1/messages",
+            "beta=true",
+            "glm-5.2",
+            None,
+            &providers,
+            &aliases,
+        );
+        assert_eq!(
+            routes_raw[0].target_url,
+            "https://open.bigmodel.cn/api/anthropic/v1/messages?beta=true"
+        );
+    }
+
+    /// Regression: `/openai/` prefix must yield a correct OpenAI URL whether the
+    /// caller passes the stripped path or the raw prefixed pathname.
+    #[test]
+    fn openai_type_forced_prefix_not_doubled() {
+        let mut providers = std::collections::HashMap::new();
+        providers.insert("oai".to_string(), openai_entry("https://api.openai.com/v1", "gpt-4o"));
+        let aliases = std::collections::HashMap::new();
+
+        let (stripped, forced) = parse_type_forced_prefix("/openai/v1/chat/completions");
+        let routes = resolve_routes_by_model(&stripped, "", "gpt-4o", forced, &providers, &aliases);
+        assert_eq!(routes[0].target_url, "https://api.openai.com/v1/chat/completions");
+
+        let routes_raw = resolve_routes_by_model(
+            "/openai/v1/chat/completions",
+            "",
+            "gpt-4o",
+            None,
+            &providers,
+            &aliases,
+        );
+        assert_eq!(routes_raw[0].target_url, "https://api.openai.com/v1/chat/completions");
+    }
+
+    /// A bare `/v1/messages` (no type-forced prefix) is unaffected.
+    #[test]
+    fn bare_v1_path_unchanged() {
+        let mut providers = std::collections::HashMap::new();
+        providers.insert(
+            "anthropic-direct".to_string(),
+            anthropic_entry("https://api.anthropic.com", "claude-3"),
+        );
+        let aliases = std::collections::HashMap::new();
+        let routes =
+            resolve_routes_by_model("/v1/messages", "", "claude-3", None, &providers, &aliases);
+        assert_eq!(routes[0].target_url, "https://api.anthropic.com/v1/messages");
+    }
 }
