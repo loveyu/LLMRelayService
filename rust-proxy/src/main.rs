@@ -83,10 +83,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     config.api_keys.len(),
                 );
                 let new_routing = RoutingTable::from_payload(config);
-                let mut rt = app_state.routing.write().await;
-                *rt = new_routing;
-                let mut synced = app_state.config_synced.write().await;
-                *synced = true;
+                {
+                    let mut rt = app_state.routing.write().await;
+                    *rt = new_routing;
+                }
+                app_state.mark_config_synced().await;
             }
         }
     });

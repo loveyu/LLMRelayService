@@ -93,6 +93,8 @@ pub async fn proxy_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, StatusCode> {
+    state.wait_for_config_sync().await;
+
     let request_id = uuid::Uuid::new_v4().to_string();
     let created_at =
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
