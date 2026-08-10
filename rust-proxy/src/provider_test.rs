@@ -795,6 +795,12 @@ fn emit_request_log(
             api_key_id: None,
             api_key_name: None,
             source_request_type: SOURCE_REQUEST_TYPE.to_string(),
+            failover_from: None,
+            failover_chain: Vec::new(),
+            failover_reason: None,
+            original_route_prefix: None,
+            original_request_model: None,
+            retry_attempt: 0,
         });
     });
 }

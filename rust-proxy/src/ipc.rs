@@ -26,6 +26,8 @@ pub enum TsToRustMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+// 一次性 IPC 消息（发完即序列化丢弃，不会大量常驻），变体体积差异无实际性能影响。
+#[allow(clippy::large_enum_variant)]
 pub enum RustToTsMessage {
     RequestLog {
         #[serde(rename = "requestId")]
@@ -59,6 +61,20 @@ pub enum RustToTsMessage {
         /// 控制台据此区分展示，并把测试请求排除出用量统计。
         #[serde(rename = "sourceRequestType", default = "default_source_request_type")]
         source_request_type: String,
+        /// 故障转移信息（与 TS `index.ts` 转发路径语义一致）。当前请求为兜底路由时，
+        /// `failover_from`/`original_route_prefix` 记录初始路由；`failover_chain` 为已失败路由列表。
+        #[serde(rename = "failoverFrom", default)]
+        failover_from: Option<String>,
+        #[serde(rename = "failoverChain", default)]
+        failover_chain: Vec<String>,
+        #[serde(rename = "failoverReason", default)]
+        failover_reason: Option<String>,
+        #[serde(rename = "originalRoutePrefix", default)]
+        original_route_prefix: Option<String>,
+        #[serde(rename = "originalRequestModel", default)]
+        original_request_model: Option<String>,
+        #[serde(rename = "retryAttempt", default)]
+        retry_attempt: u32,
     },
     ResponseLog {
         #[serde(rename = "requestId")]

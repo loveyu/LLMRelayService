@@ -231,12 +231,12 @@ import('./rust-process').then(({ startRustProxy: startRust, stopRustProxy }) => 
               forward_headers: msg.forwardHeaders ?? {},
               api_key_id: msg.apiKeyId ?? null,
               api_key_name: msg.apiKeyName ?? null,
-              failover_from: null,
-              failover_chain: [],
-              failover_reason: null,
-              original_route_prefix: null,
-              original_request_model: null,
-              retry_attempt: 0,
+              failover_from: msg.failoverFrom ?? null,
+              failover_chain: msg.failoverChain ?? [],
+              failover_reason: msg.failoverReason ?? null,
+              original_route_prefix: msg.originalRoutePrefix ?? null,
+              original_request_model: msg.originalRequestModel ?? null,
+              retry_attempt: msg.retryAttempt ?? 0,
               source_request_type: msg.sourceRequestType ?? 'chat_completion',
             } as any);
             break;

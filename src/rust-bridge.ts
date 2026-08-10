@@ -106,6 +106,13 @@ interface RustRequestLog {
   apiKeyName: string | null;
   /** 请求来源类型：真实转发 "chat_completion"，连通性测试 "connectivity_test"。 */
   sourceRequestType?: string;
+  /** 故障转移信息（由 rust-proxy 填充，与 TS index.ts 转发路径语义一致）。 */
+  failoverFrom?: string | null;
+  failoverChain?: string[];
+  failoverReason?: string | null;
+  originalRoutePrefix?: string | null;
+  originalRequestModel?: string | null;
+  retryAttempt?: number;
 }
 
 interface RustResponseLog {

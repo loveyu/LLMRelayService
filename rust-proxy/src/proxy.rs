@@ -146,6 +146,11 @@ pub async fn proxy_handler(
     let mut attempt_index: usize = 0;
     let mut retry_count: u32 = 0;
 
+    // Failover observability: accumulate failed route labels + last trigger reason so the
+    // request log can show the failover trajectory (matches TS `index.ts` semantics).
+    let mut failed_route_chain: Vec<String> = Vec::new();
+    let mut failover_reason: Option<String> = None;
+
     loop {
         if attempt_index >= active_routes.len() {
             warn!("All routes exhausted for {}", pathname);
@@ -248,6 +253,11 @@ pub async fn proxy_handler(
         let upstream_result = tokio::time::timeout(timeout_dur, upstream_req.send()).await;
         let t_ttfb = t_send.elapsed();
 
+        // Failover perspective for this attempt (matches TS `index.ts`):
+        // a fallback route (attempt_index > 0) records the initial route as failover_from.
+        let is_fallback = attempt_index > 0;
+        let failover_from = if is_fallback { Some(describe_route(&initial_route)) } else { None };
+
         // Fire-and-forget: send request log to TS via IPC
         send_request_log(
             &state,
@@ -264,6 +274,12 @@ pub async fn proxy_handler(
             &body,
             auth_result.api_key_id.clone(),
             auth_result.api_key_name.clone(),
+            failover_from.clone(),
+            failed_route_chain.clone(),
+            failover_reason.clone(),
+            failover_from.clone(),
+            if is_fallback { Some(model.clone()) } else { None },
+            retry_count,
         );
 
         match upstream_result {
@@ -400,6 +416,13 @@ pub async fn proxy_handler(
                 // TS behavior: only retry/fallback for explicitly retryable status codes.
                 // Non-retryable (e.g., 404, 401) are returned directly to the client.
                 let trigger = FailoverTrigger::Status(status);
+                {
+                    let label = describe_route(&route);
+                    if !failed_route_chain.contains(&label) {
+                        failed_route_chain.push(label);
+                    }
+                    failover_reason = Some(describe_trigger(&trigger));
+                }
                 if failover_policy.enabled
                     && failover::should_trigger_failover(&failover_policy, &trigger)
                 {
@@ -463,6 +486,13 @@ pub async fn proxy_handler(
                 } else {
                     FailoverTrigger::NetworkError(e.to_string())
                 };
+                {
+                    let label = describe_route(&route);
+                    if !failed_route_chain.contains(&label) {
+                        failed_route_chain.push(label);
+                    }
+                    failover_reason = Some(describe_trigger(&trigger));
+                }
 
                 if failover_policy.enabled
                     && failover::should_trigger_failover(&failover_policy, &trigger)
@@ -509,6 +539,13 @@ pub async fn proxy_handler(
             Err(_) => {
                 // Timeout on first byte
                 let trigger = FailoverTrigger::Timeout;
+                {
+                    let label = describe_route(&route);
+                    if !failed_route_chain.contains(&label) {
+                        failed_route_chain.push(label);
+                    }
+                    failover_reason = Some(describe_trigger(&trigger));
+                }
                 if failover_policy.enabled
                     && failover::should_trigger_failover(&failover_policy, &trigger)
                 {
@@ -1008,6 +1045,24 @@ fn select_first_byte_timeout(_route: &RouteResult, pathname: &str, state: &AppSt
     }
 }
 
+/// Human-readable route label for failover chain logs: `channel` or `channel (model)`.
+/// Matches TS `describeRoute` in `index.ts`.
+fn describe_route(route: &RouteResult) -> String {
+    match &route.resolved_model {
+        Some(m) if !m.is_empty() => format!("{} ({})", route.channel_name, m),
+        _ => route.channel_name.clone(),
+    }
+}
+
+/// One-line failover trigger description for the request log.
+fn describe_trigger(trigger: &failover::FailoverTrigger) -> String {
+    match trigger {
+        failover::FailoverTrigger::Status(status) => format!("HTTP {status}"),
+        failover::FailoverTrigger::Timeout => "timeout".to_string(),
+        failover::FailoverTrigger::NetworkError(msg) => format!("network_error: {msg}"),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn send_request_log(
     state: &AppState,
@@ -1024,6 +1079,12 @@ fn send_request_log(
     original_body: &[u8],
     api_key_id: Option<String>,
     api_key_name: Option<String>,
+    failover_from: Option<String>,
+    failover_chain: Vec<String>,
+    failover_reason: Option<String>,
+    original_route_prefix: Option<String>,
+    original_request_model: Option<String>,
+    retry_attempt: u32,
 ) {
     let ipc = state.ipc.clone();
     let rid = request_id.to_string();
@@ -1077,6 +1138,12 @@ fn send_request_log(
             api_key_id,
             api_key_name,
             source_request_type: "chat_completion".to_string(),
+            failover_from,
+            failover_chain,
+            failover_reason,
+            original_route_prefix,
+            original_request_model,
+            retry_attempt,
         });
     });
 }

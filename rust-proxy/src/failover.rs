@@ -4,7 +4,6 @@ use crate::config::{FailoverStatusRange, GatewayFailoverPolicy};
 #[derive(Debug, Clone)]
 pub enum FailoverTrigger {
     Timeout,
-    #[expect(dead_code)]
     NetworkError(String),
     Status(u16),
 }
