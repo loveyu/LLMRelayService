@@ -171,9 +171,14 @@ function SseReasoningCard({ value }: { value: string }) {
       </CardHeader>
       {open && (
         <CardContent className="pt-4">
-          <div className="max-h-[32rem] overflow-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/90">
-            {value}
-          </div>
+          {/* 思考过程用只读 Textarea 渲染：原生 textarea 必然按宽度软换行、并把
+              \n 渲染成断行，是「支持换行的纯文本」最稳的实现（与旧 SSE 拼接卡片一致）。 */}
+          <Textarea
+            readOnly
+            value={value}
+            aria-label={t("detail.sseReasoning")}
+            className="max-h-[32rem] min-h-[10rem] w-full resize-none overflow-auto whitespace-pre-wrap break-words bg-muted/30 font-mono text-xs leading-relaxed"
+          />
         </CardContent>
       )}
     </Card>

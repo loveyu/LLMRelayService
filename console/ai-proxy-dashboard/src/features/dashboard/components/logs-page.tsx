@@ -354,7 +354,9 @@ export function LogsPage({
           side={isMobile ? "bottom" : "right"}
           className={isMobile
             ? "h-[88vh] max-h-[88vh] gap-0 p-0"
-            : "h-full w-[min(860px,75vw)] max-w-none gap-0 p-0"}
+            // PC 弹窗宽度随屏幕增大而增大：vw 比例在更大断点递增，并用 max-w 兜底
+            // 防止超宽屏过宽影响阅读（原先固定 min(860px,75vw) 在大屏上偏窄）。
+            : "h-full w-[78vw] gap-0 p-0 lg:w-[82vw] xl:w-[84vw] 2xl:w-[86vw] max-w-[1600px]"}
         >
           {isMobile ? (
             <div className="flex shrink-0 justify-center pb-1 pt-2.5">
