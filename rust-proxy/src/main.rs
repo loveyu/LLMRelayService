@@ -41,6 +41,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
 
+    // 请求体上限：默认 100MB，可通过 RUST_PROXY_MAX_BODY_BYTES 覆盖。
+    // 10MB 对带图片的请求（codex responses 里 base64 图 + 长 system prompt + 上下文）不够，会 413。
+    let max_body_bytes = std::env::var("RUST_PROXY_MAX_BODY_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100 * 1024 * 1024);
+
     let app = Router::new()
         .route("/health", get(health_handler))
         .route("/v1/models", get(models_handler))
@@ -49,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // 渠道连通性测试：本机 TS 控制台/OpenAPI 经此走 Rust 测试上游，TS 旧实现逐步废弃。
         .route("/admin/providers/{channel_name}/test", post(provider_test::test_provider_handler))
         .fallback(proxy::proxy_handler)
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(10 * 1024 * 1024))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(max_body_bytes))
         .layer(cors)
         .with_state(app_state.clone());
 
