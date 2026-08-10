@@ -782,34 +782,38 @@ async fn build_response(
 
     if let Some(rw) = rewriter {
         if converting_responses && is_sse {
+            let observer_handle = SseObserverHandle::new(created_at);
             let raw_stream = upstream_resp.bytes_stream();
             let conv = ChatSseToResponsesSse::new(responses_model);
             let sse_stream = ResponsesSseStream::new(raw_stream, conv);
+            let observed = ObservingSseStream::new(sse_stream, observer_handle.clone());
             let response = response_builder
                 .header("content-type", "text/event-stream")
-                .body(Body::from_stream(sse_stream))
+                .body(Body::from_stream(observed))
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             return Ok(ResponseWithUsage {
                 response,
                 usage: None,
                 body_bytes: 0,
                 body_content: None,
-                sse_observer: None,
+                sse_observer: Some(observer_handle),
             });
         }
 
         if is_sse {
+            let observer_handle = SseObserverHandle::new(created_at);
             let raw_stream = upstream_resp.bytes_stream();
             let body_stream = ModelRewriteStream::new(raw_stream, rw);
+            let observed = ObservingSseStream::new(body_stream, observer_handle.clone());
             let response = response_builder
-                .body(Body::from_stream(body_stream))
+                .body(Body::from_stream(observed))
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             return Ok(ResponseWithUsage {
                 response,
                 usage: None,
                 body_bytes: 0,
                 body_content: None,
-                sse_observer: None,
+                sse_observer: Some(observer_handle),
             });
         }
 
@@ -830,19 +834,21 @@ async fn build_response(
         })
     } else {
         if converting_responses && is_sse {
+            let observer_handle = SseObserverHandle::new(created_at);
             let raw_stream = upstream_resp.bytes_stream();
             let conv = ChatSseToResponsesSse::new(responses_model);
             let sse_stream = ResponsesSseStream::new(raw_stream, conv);
+            let observed = ObservingSseStream::new(sse_stream, observer_handle.clone());
             let response = response_builder
                 .header("content-type", "text/event-stream")
-                .body(Body::from_stream(sse_stream))
+                .body(Body::from_stream(observed))
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             return Ok(ResponseWithUsage {
                 response,
                 usage: None,
                 body_bytes: 0,
                 body_content: None,
-                sse_observer: None,
+                sse_observer: Some(observer_handle),
             });
         }
 
