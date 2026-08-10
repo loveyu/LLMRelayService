@@ -299,13 +299,17 @@ export function PayloadPanel({
 
   type ViewMode = "chat" | "system" | "tools" | "json" | "raw"
 
-  const defaultMode: ViewMode = hasMessages
-    ? "chat"
-    : hasSystem
-      ? "system"
-      : hasTools
-        ? "tools"
-        : "json"
+  // response_payload 这类 SSE 文本流不是合法 JSON，JSON.parse 失败时直接落到「原始」
+  // 视图，否则面板会整块空白（连 tab 都不渲染）。
+  const defaultMode: ViewMode = !isValidJson
+    ? "raw"
+    : hasMessages
+      ? "chat"
+      : hasSystem
+        ? "system"
+        : hasTools
+          ? "tools"
+          : "json"
 
   const [viewMode, setViewMode] = useState<ViewMode>(defaultMode)
 
@@ -349,7 +353,7 @@ export function PayloadPanel({
             </Button>
           </div>
         </div>
-        {isValidJson && (
+        {payloadText && (
           <>
             <Separator className="my-3" />
             <div className="flex flex-wrap gap-1">
@@ -380,13 +384,15 @@ export function PayloadPanel({
                   {t("payload.toolsTab")}
                 </Button>
               )}
-              <Button
-                variant={viewMode === "json" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setViewMode("json")}
-              >
-                {t("payload.structured")}
-              </Button>
+              {isValidJson && (
+                <Button
+                  variant={viewMode === "json" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setViewMode("json")}
+                >
+                  {t("payload.structured")}
+                </Button>
+              )}
               <Button
                 variant={viewMode === "raw" ? "default" : "outline"}
                 size="sm"

@@ -416,6 +416,11 @@ export function extractReadableSseText(payload: string | null | undefined): stri
   if (!jsonObjects.length) return ""
 
   const segments: string[] = []
+  // Anthropic 流式 tool_use：content_block_start(type=tool_use) 给出工具名，
+  // 随后的 content_block_delta(input_json_delta) 逐块送来参数 JSON 片段，
+  // 直到 content_block_stop 收尾。按 index 累积片段，收尾时输出可读的
+  // [Tool: name] + 参数，避免纯工具调用响应在「SSE 拼接」卡片里整段空白。
+  const toolUseBuffers = new Map<number, { name: string; parts: string[] }>()
 
   for (const event of jsonObjects) {
     const eventType = typeof event.type === "string" ? event.type : ""
@@ -429,6 +434,13 @@ export function extractReadableSseText(payload: string | null | undefined): stri
       if (contentBlock.type === "text") {
         const text = collectTextFromUnknown(contentBlock)
         if (text) segments.push(text)
+      } else if (contentBlock.type === "tool_use") {
+        const idx = typeof event.index === "number" ? event.index : 0
+        const name =
+          typeof contentBlock.name === "string" && contentBlock.name
+            ? contentBlock.name
+            : "tool"
+        toolUseBuffers.set(idx, { name, parts: [] })
       }
       continue
     }
@@ -437,6 +449,28 @@ export function extractReadableSseText(payload: string | null | undefined): stri
       const deltaRecord = delta as Record<string, unknown>
       if (deltaRecord.type === "text_delta" && typeof deltaRecord.text === "string") {
         segments.push(deltaRecord.text)
+      } else if (
+        deltaRecord.type === "input_json_delta" &&
+        typeof deltaRecord.partial_json === "string"
+      ) {
+        const idx = typeof event.index === "number" ? event.index : 0
+        toolUseBuffers.get(idx)?.parts.push(deltaRecord.partial_json)
+      }
+      continue
+    }
+
+    if (eventType === "content_block_stop") {
+      const idx = typeof event.index === "number" ? event.index : 0
+      const buf = toolUseBuffers.get(idx)
+      if (buf) {
+        toolUseBuffers.delete(idx)
+        let inputText = buf.parts.join("")
+        try {
+          inputText = JSON.stringify(JSON.parse(inputText), null, 2)
+        } catch {
+          // 参数片段拼不出合法 JSON（极少见，如上游截断）时保留原始拼接文本。
+        }
+        segments.push(`\n\n[Tool: ${buf.name}]\n${inputText}`)
       }
       continue
     }
