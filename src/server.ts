@@ -13,6 +13,10 @@ import { runMigrations, type MigrationStatus } from './db/migrate';
 import { getDatabaseUrl, getDbDriver, getSqliteFilePath } from './db/config';
 import postgres from 'postgres';
 import { createCorsPreflightResponse, withCorsHeaders } from './cors';
+import { initLoggerFromEnv, overrideConsole } from './logger';
+
+initLoggerFromEnv();
+overrideConsole();
 
 const stubEnv = {
   LLM_STATUS: {
@@ -191,7 +195,7 @@ const bunServer = Bun.serve({
 
 console.log(`LLM Gateway running on ${HOST}:${PORT} (idleTimeout=${Number.isFinite(IDLE_TIMEOUT_SECONDS) && IDLE_TIMEOUT_SECONDS >= 0 ? IDLE_TIMEOUT_SECONDS : 0}s)`);
 
-startPerfMonitor();
+if (process.env.PERF_ENABLED !== 'false') startPerfMonitor();
 
 // Start Rust proxy as child process. TS manages its lifecycle:
 // auto-restart on crash, health check, status/restart via console API.

@@ -168,8 +168,8 @@ function doStart(): void {
     _startedAt = Date.now();
 
     // Pipe stdout/stderr with prefix
-    pipeStream(_proc.stdout, 'rust');
-    pipeStream(_proc.stderr, 'rust:err');
+    pipeStream(_proc.stdout, 'rust', console.log);
+    pipeStream(_proc.stderr, 'rust:err', console.error);
 
     // Monitor exit
     const proc = _proc;
@@ -196,10 +196,11 @@ function doStart(): void {
 }
 
 async function pipeStream(
-    stream: ReadableStream<Uint8Array> | null,
+    stream: ReadableStream<Uint8Array> | number | null | undefined,
     prefix: string,
+    write: (...args: unknown[]) => void,
 ): Promise<void> {
-    if (!stream) return;
+    if (!stream || typeof stream === 'number') return;
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let buf = '';
@@ -211,10 +212,10 @@ async function pipeStream(
             const lines = buf.split('\n');
             buf = lines.pop() ?? '';
             for (const line of lines) {
-                if (line.trim()) console.log(`[${prefix}] ${line}`);
+                if (line.trim()) write(`[${prefix}] ${line}`);
             }
         }
-        if (buf.trim()) console.log(`[${prefix}] ${buf}`);
+        if (buf.trim()) write(`[${prefix}] ${buf}`);
     } catch {
         // stream closed
     }

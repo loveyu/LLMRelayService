@@ -13,6 +13,7 @@ use axum::{
     response::Response,
 };
 use bytes::Bytes;
+use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -72,6 +73,19 @@ fn build_forward_headers(
     fwd
 }
 
+fn redacted_headers(headers: &HeaderMap) -> Value {
+    let mut values = Map::new();
+    for (name, value) in headers {
+        let value = if matches!(name.as_str(), "authorization" | "x-api-key") {
+            "[REDACTED]".to_string()
+        } else {
+            String::from_utf8_lossy(value.as_bytes()).into_owned()
+        };
+        values.insert(name.to_string(), Value::String(value));
+    }
+    Value::Object(values)
+}
+
 pub async fn proxy_handler(
     State(state): State<Arc<AppState>>,
     method: Method,
@@ -108,7 +122,18 @@ pub async fn proxy_handler(
     let initial_route = match initial_route {
         Some(r) => r,
         None => {
-            warn!("No route found for {} {}", method, pathname);
+            let headers = redacted_headers(&headers);
+            let preview_len = body.len().min(4 * 1024);
+            let body_preview = String::from_utf8_lossy(&body[..preview_len]);
+            warn!(
+                method = %method,
+                path = pathname,
+                query = search,
+                model,
+                headers = %headers,
+                body_preview = %body_preview,
+                "No route found"
+            );
             return Err(StatusCode::NOT_FOUND);
         }
     };

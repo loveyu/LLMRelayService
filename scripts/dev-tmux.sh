@@ -32,7 +32,7 @@ IPC_SOCKET="${LRS_IPC_SOCKET:-/tmp/lrs-ipc.sock}"
 
 # name | cwd | 探活端口 | 启动命令(剩余字段, 含空格)
 SERVICES=(
-  "backend|$REPO_DIR|8300|bun run dev:server"
+  "backend|$REPO_DIR|8300|LOG_DIR=$REPO_DIR/.local/logs bun run dev:server"
   "vite|$REPO_DIR/console/ai-proxy-dashboard|${VITE_PORT}|LRS_BACKEND_ORIGIN=${BACKEND_ORIGIN} bun run dev -- --port ${VITE_PORT} --host 0.0.0.0"
 )
 # restart 后要等释放的端口（backend 8300 + rust-proxy 3311 + vite）—— 确保子进程也退出

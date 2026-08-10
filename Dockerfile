@@ -17,6 +17,8 @@ FROM oven/bun:1 AS runner
 
 WORKDIR /app
 
+RUN mkdir -p /app/logs
+
 # curl provides stable HTTP/HTTPS/SOCKS proxy support under the Bun runtime.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
