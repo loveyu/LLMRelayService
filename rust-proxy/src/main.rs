@@ -14,6 +14,7 @@ use crate::app_state::{AppState, RoutingTable};
 use crate::config::SyncConfigPayload;
 use axum::{
     Json, Router,
+    extract::DefaultBodyLimit,
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -57,6 +58,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/admin/providers/{channel_name}/test", post(provider_test::test_provider_handler))
         .fallback(proxy::proxy_handler)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(max_body_bytes))
+        // axum 的 body 提取器(Bytes/String/Json)另有 DefaultBodyLimit(默认仅 2MB),
+        // 跟上面 tower-http 层是两套机制;必须同步抬高,否则大 body(图片)在提取阶段就被 413。
+        .layer(DefaultBodyLimit::max(max_body_bytes))
         .layer(cors)
         .with_state(app_state.clone());
 
