@@ -455,7 +455,7 @@ export default {
     sseReasoningDesc: "Model's intermediate reasoning process (reasoning_content / thinking). Collapsed by default; click the title to expand.",
     sseReasoningCount: "{{count}} chars",
     sseContent: "Content",
-    sseContentDesc: "Final reply content from the model (rendered as Markdown).",
+    sseContentDesc: "Final reply content from the model (toggle Markdown rendered / source).",
     responseBody: "Response Body",
     responseHeaders: "Response Headers",
     responseHeadersDesc: "Raw HTTP response headers returned from upstream",

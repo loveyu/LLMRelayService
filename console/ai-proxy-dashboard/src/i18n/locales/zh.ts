@@ -455,7 +455,7 @@ export default {
     sseReasoningDesc: "模型推理的中间过程（reasoning_content / thinking），默认折叠，点击标题展开。",
     sseReasoningCount: "{{count}} 字",
     sseContent: "内容",
-    sseContentDesc: "模型最终输出的回复正文（Markdown 渲染）。",
+    sseContentDesc: "模型最终输出的回复正文，可切换 Markdown 渲染 / 源码查看。",
     responseBody: "响应 Body",
     responseHeaders: "响应头",
     responseHeadersDesc: "上游服务返回给网关的原始 HTTP 响应头",

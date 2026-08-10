@@ -27,6 +27,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import { JsonCodeViewer } from "@/components/ui/json-code-viewer"
+import { MarkdownCodeViewer } from "@/components/ui/markdown-code-viewer"
 import { MarkdownRenderer } from "@/components/ui/markdown"
 import { copyText } from "@/lib/clipboard"
 import { useIsMobile } from "@/hooks/use-is-mobile"
@@ -179,11 +180,12 @@ function SseReasoningCard({ value }: { value: string }) {
   )
 }
 
-// 内容：Markdown 渲染（与「对话列表」里 assistant 文本气泡的渲染方式一致），
-// 让最终回复正文可直接阅读，而不是看一整块 Markdown 源码。
+// 内容：默认 Markdown 渲染（与「对话列表」里 assistant 文本气泡一致），可切换
+// 查看 Markdown 源码（CodeMirror 高亮 + 自动换行），让最终回复正文可直接阅读。
 function SseContentCard({ value }: { value: string }) {
   const { t } = useTranslation()
   const copy = useCopyText()
+  const [mode, setMode] = useState<"rendered" | "source">("rendered")
   return (
     <Card size="sm">
       <CardHeader className="border-b border-border/60 pb-4">
@@ -192,15 +194,37 @@ function SseContentCard({ value }: { value: string }) {
             <CardTitle>{t("detail.sseContent")}</CardTitle>
             <CardDescription>{t("detail.sseContentDesc")}</CardDescription>
           </div>
-          <Button variant="ghost" size="sm" className="shrink-0" onClick={() => copy(value)}>
-            <Copy className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{t("common.copy")}</span>
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="flex gap-1">
+              <Button
+                variant={mode === "rendered" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setMode("rendered")}
+              >
+                {t("payload.mdRendered")}
+              </Button>
+              <Button
+                variant={mode === "source" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setMode("source")}
+              >
+                {t("payload.mdSource")}
+              </Button>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => copy(value)}>
+              <Copy className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{t("common.copy")}</span>
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="pt-4">
         <div className="max-h-[40rem] overflow-auto">
-          <MarkdownRenderer text={value} />
+          {mode === "rendered" ? (
+            <MarkdownRenderer text={value} />
+          ) : (
+            <MarkdownCodeViewer value={value} />
+          )}
         </div>
       </CardContent>
     </Card>
