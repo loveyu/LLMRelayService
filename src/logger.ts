@@ -25,14 +25,49 @@ let currentDate = '';
 let stream: WriteStream | null = null;
 let initialized = false;
 let consoleOverridden = false;
+let dateTimeFormatter: Intl.DateTimeFormat;
 
 function parseLevel(value: string | undefined, fallback: LogLevel): LogLevel {
   const normalized = value?.toLowerCase();
   return normalized && normalized in LEVEL_VALUES ? normalized as LogLevel : fallback;
 }
 
+function createDateTimeFormatter(timeZone: string): Intl.DateTimeFormat {
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZoneName: 'longOffset',
+  };
+  try {
+    return new Intl.DateTimeFormat('en-US', options);
+  } catch {
+    originalConsole.warn(`[logger] Invalid TZ '${timeZone}', falling back to UTC`);
+    return new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' });
+  }
+}
+
+function dateParts(date: Date): Record<string, string> {
+  return Object.fromEntries(
+    dateTimeFormatter.formatToParts(date).map(({ type, value }) => [type, value]),
+  );
+}
+
 function dateStamp(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const parts = dateParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function timestamp(date: Date): string {
+  const parts = dateParts(date);
+  const offset = parts.timeZoneName === 'GMT' ? 'Z' : parts.timeZoneName?.replace('GMT', '');
+  const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.${milliseconds}${offset}`;
 }
 
 function getStream(date: Date): WriteStream {
@@ -53,7 +88,7 @@ function log(level: LogLevel, args: unknown[]): void {
   if (LEVEL_VALUES[level] >= LEVEL_VALUES[fileLevel]) {
     const now = new Date();
     getStream(now).write(`${JSON.stringify({
-      timestamp: now.toISOString(),
+      timestamp: timestamp(now),
       level,
       message,
     })}\n`);
@@ -70,6 +105,7 @@ export function initLoggerFromEnv(): void {
   logDir = process.env.LOG_DIR || '/app/logs';
   fileLevel = parseLevel(process.env.LOG_LEVEL, 'info');
   stdoutLevel = parseLevel(process.env.LOG_STDOUT_LEVEL, 'warn');
+  dateTimeFormatter = createDateTimeFormatter(process.env.TZ || 'UTC');
   mkdirSync(logDir, { recursive: true });
   initialized = true;
 }
