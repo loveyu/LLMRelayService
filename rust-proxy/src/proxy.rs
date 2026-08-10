@@ -411,7 +411,10 @@ pub async fn proxy_handler(
                                     response_headers: hdrs,
                                     response_body_bytes: obs.total_bytes,
                                     first_chunk_at: obs.first_chunk_at_ms,
-                                    first_token_at: obs.first_token_at_ms,
+                                    // Real first-token time when detected; fall back to first
+                                    // chunk (TTFB) for formats we can't classify, so the metric
+                                    // never regresses to blank for the rewrite/conversion paths.
+                                    first_token_at: obs.first_token_at_ms.or(obs.first_chunk_at_ms),
                                     completed_at: Some(now),
                                     has_streaming_content: true,
                                     response_model: resp_model,

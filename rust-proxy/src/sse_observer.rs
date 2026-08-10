@@ -193,12 +193,18 @@ fn detect_first_sse_token(text: &str) -> bool {
                     _ => {
                         if let Some(choices) = v.get("choices").and_then(|c| c.as_array()) {
                             for c in choices {
-                                let has_text = c
-                                    .get("delta")
-                                    .and_then(|d| d.get("content"))
-                                    .and_then(|x| x.as_str())
-                                    .is_some_and(|t| !t.is_empty());
-                                if has_text {
+                                let Some(delta) = c.get("delta") else {
+                                    continue;
+                                };
+                                // content (normal) or reasoning_content (deepseek/glm
+                                // reasoning models) — either counts as the first token.
+                                let text_of = |k: &str| {
+                                    delta
+                                        .get(k)
+                                        .and_then(|x| x.as_str())
+                                        .is_some_and(|t| !t.is_empty())
+                                };
+                                if text_of("content") || text_of("reasoning_content") {
                                     return true;
                                 }
                             }
@@ -402,6 +408,10 @@ data: [DONE]\n\
         ));
         assert!(detect_first_sse_token(
             "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"
+        ));
+        // Reasoning models (deepseek/glm) stream reasoning_content before content.
+        assert!(detect_first_sse_token(
+            "data: {\"choices\":[{\"delta\":{\"content\":null,\"reasoning_content\":\" The\"}}]}\n\n"
         ));
     }
 
