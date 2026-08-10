@@ -408,18 +408,29 @@ function collectTextFromUnknown(value: unknown): string {
   return ""
 }
 
-export function extractReadableSseText(payload: string | null | undefined): string {
+export type SseReadableSegments = {
+  reasoning: string
+  content: string
+}
+
+// 把流式 SSE 拆成「思考过程」与「内容」两段，避免推理模型的 reasoning_content
+// 与正文混在一起难以阅读：
+//  - reasoning: OpenAI Chat 的 delta.reasoning_content / reasoning、Anthropic 的
+//    thinking 块与 thinking_delta、OpenAI Responses 的 reasoning summary。
+//  - content:   其余正文（content / text_delta / tool_use / output_text）。
+// Anthropic 流式 tool_use 仍按 index 累积 input_json_delta，在 content_block_stop
+// 时输出 [Tool: name] + 美化后的参数 JSON。
+export function extractReadableSseSegments(
+  payload: string | null | undefined,
+): SseReadableSegments {
   const payloadText = String(payload ?? "").trim()
-  if (!payloadText) return ""
+  if (!payloadText) return { reasoning: "", content: "" }
 
   const jsonObjects = extractJsonObjectsFromSse(payloadText)
-  if (!jsonObjects.length) return ""
+  if (!jsonObjects.length) return { reasoning: "", content: "" }
 
-  const segments: string[] = []
-  // Anthropic 流式 tool_use：content_block_start(type=tool_use) 给出工具名，
-  // 随后的 content_block_delta(input_json_delta) 逐块送来参数 JSON 片段，
-  // 直到 content_block_stop 收尾。按 index 累积片段，收尾时输出可读的
-  // [Tool: name] + 参数，避免纯工具调用响应在「SSE 拼接」卡片里整段空白。
+  const reasoningParts: string[] = []
+  const contentParts: string[] = []
   const toolUseBuffers = new Map<number, { name: string; parts: string[] }>()
 
   for (const event of jsonObjects) {
@@ -427,13 +438,24 @@ export function extractReadableSseText(payload: string | null | undefined): stri
     const delta = event.delta
     const message = event.message
 
+    // OpenAI Responses API：reasoning summary 事件单独路由到思考过程，
+    // 避免和 output_text 一起落到 fallback 被当作正文。
+    if (eventType.startsWith("response.reasoning") || eventType.startsWith("reasoning_summary")) {
+      const text = collectTextFromUnknown(delta) || collectTextFromUnknown(event.part)
+      if (text) reasoningParts.push(text)
+      continue
+    }
+
     if (eventType === "content_block_start") {
       const contentBlock = (event.content_block ?? null) as Record<string, unknown> | null
       if (!contentBlock) continue
 
       if (contentBlock.type === "text") {
         const text = collectTextFromUnknown(contentBlock)
-        if (text) segments.push(text)
+        if (text) contentParts.push(text)
+      } else if (contentBlock.type === "thinking") {
+        const text = collectTextFromUnknown(contentBlock)
+        if (text) reasoningParts.push(text)
       } else if (contentBlock.type === "tool_use") {
         const idx = typeof event.index === "number" ? event.index : 0
         const name =
@@ -448,7 +470,12 @@ export function extractReadableSseText(payload: string | null | undefined): stri
     if (eventType === "content_block_delta" && delta && typeof delta === "object") {
       const deltaRecord = delta as Record<string, unknown>
       if (deltaRecord.type === "text_delta" && typeof deltaRecord.text === "string") {
-        segments.push(deltaRecord.text)
+        contentParts.push(deltaRecord.text)
+      } else if (
+        deltaRecord.type === "thinking_delta" &&
+        typeof deltaRecord.thinking === "string"
+      ) {
+        reasoningParts.push(deltaRecord.thinking)
       } else if (
         deltaRecord.type === "input_json_delta" &&
         typeof deltaRecord.partial_json === "string"
@@ -470,7 +497,7 @@ export function extractReadableSseText(payload: string | null | undefined): stri
         } catch {
           // 参数片段拼不出合法 JSON（极少见，如上游截断）时保留原始拼接文本。
         }
-        segments.push(`\n\n[Tool: ${buf.name}]\n${inputText}`)
+        contentParts.push(`\n\n[Tool: ${buf.name}]\n${inputText}`)
       }
       continue
     }
@@ -478,7 +505,7 @@ export function extractReadableSseText(payload: string | null | undefined): stri
     if (eventType === "message_start" && message && typeof message === "object") {
       const messageRecord = message as Record<string, unknown>
       const text = collectTextFromUnknown(messageRecord.content)
-      if (text) segments.push(text)
+      if (text) contentParts.push(text)
       continue
     }
 
@@ -486,27 +513,27 @@ export function extractReadableSseText(payload: string | null | undefined): stri
       for (const choice of event.choices as Array<Record<string, unknown>>) {
         const choiceDelta = choice?.delta
         if (typeof choiceDelta === "string") {
-          segments.push(choiceDelta)
+          contentParts.push(choiceDelta)
           continue
         }
 
         if (choiceDelta && typeof choiceDelta === "object") {
           const deltaRecord = choiceDelta as Record<string, unknown>
 
-          // reasoning_content 推理内容
-          const reasoningContent = deltaRecord.reasoning_content
+          // reasoning_content（deepseek/glm 等推理模型）/ reasoning 推理内容
+          const reasoningContent = deltaRecord.reasoning_content ?? deltaRecord.reasoning
           if (typeof reasoningContent === "string" && reasoningContent) {
-            segments.push(reasoningContent)
+            reasoningParts.push(reasoningContent)
           }
 
           // content 普通内容
           const content = deltaRecord.content
           if (typeof content === "string" && content) {
-            segments.push(content)
+            contentParts.push(content)
           }
           if (Array.isArray(content)) {
             const text = content.map((item) => collectTextFromUnknown(item)).join("")
-            if (text) segments.push(text)
+            if (text) contentParts.push(text)
           }
 
           // tool_calls 工具调用
@@ -520,11 +547,11 @@ export function extractReadableSseText(payload: string | null | undefined): stri
                 const funcRecord = func as Record<string, unknown>
                 // 函数名只在第一次出现时添加
                 if (typeof funcRecord.name === "string" && funcRecord.name) {
-                  segments.push(`\n[Tool: ${funcRecord.name}]\n`)
+                  contentParts.push(`\n[Tool: ${funcRecord.name}]\n`)
                 }
                 // 参数逐块拼接
                 if (typeof funcRecord.arguments === "string") {
-                  segments.push(funcRecord.arguments)
+                  contentParts.push(funcRecord.arguments)
                 }
               }
             }
@@ -538,10 +565,13 @@ export function extractReadableSseText(payload: string | null | undefined): stri
       || collectTextFromUnknown(event.content)
       || collectTextFromUnknown(delta)
 
-    if (text) segments.push(text)
+    if (text) contentParts.push(text)
   }
 
-  return segments.join("").trim()
+  return {
+    reasoning: reasoningParts.join("").trim(),
+    content: contentParts.join("").trim(),
+  }
 }
 
 export function getPayloadBytes(payload: string | null | undefined): number {

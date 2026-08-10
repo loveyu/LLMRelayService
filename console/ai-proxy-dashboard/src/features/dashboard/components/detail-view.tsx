@@ -1,7 +1,9 @@
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Copy } from "lucide-react"
+import { ChevronDown, ChevronRight, Copy } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -25,13 +27,14 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import { JsonCodeViewer } from "@/components/ui/json-code-viewer"
+import { MarkdownRenderer } from "@/components/ui/markdown"
 import { copyText } from "@/lib/clipboard"
 import { useIsMobile } from "@/hooks/use-is-mobile"
 import { DetailMetricTable } from "@/features/dashboard/components/detail-metric-table"
 import { PayloadPanel } from "@/features/dashboard/components/payload-panel"
 import type { ConsoleRequestDetail } from "@/features/dashboard/types"
 import {
-  extractReadableSseText,
+  extractReadableSseSegments,
   formatCount,
   formatDuration,
   formatTime,
@@ -115,6 +118,137 @@ function ReadonlyTextCard({
   )
 }
 
+// 复制按钮：与 PayloadPanel 的复制行为一致（成功/失败 toast）。
+function useCopyText() {
+  const { t } = useTranslation()
+  return (text: string) =>
+    copyText(text).then((ok) =>
+      ok ? toast.success(t("common.copied")) : toast.error(t("common.copyFailed")),
+    )
+}
+
+// 思考过程：默认折叠的纯文本卡片。推理内容（reasoning_content / thinking）通常
+// 较长，折叠后正文「内容」优先呈现，需要时再展开查看推理细节。
+function SseReasoningCard({ value }: { value: string }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const copy = useCopyText()
+  return (
+    <Card size="sm">
+      <CardHeader className="border-b border-border/60 pb-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setOpen(!open)}
+                aria-expanded={open}
+                className="flex items-center gap-1 text-foreground transition-colors hover:text-primary"
+              >
+                {open ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                )}
+                <CardTitle className="text-amber-700 dark:text-amber-400">
+                  {t("detail.sseReasoning")}
+                </CardTitle>
+              </button>
+            </div>
+            <CardDescription>{t("detail.sseReasoningDesc")}</CardDescription>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-[11px] text-muted-foreground">
+              {t("detail.sseReasoningCount", { count: formatCount(value.length) })}
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => copy(value)}>
+              <Copy className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{t("common.copy")}</span>
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      {open && (
+        <CardContent className="pt-4">
+          <div className="max-h-[32rem] overflow-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/90">
+            {value}
+          </div>
+        </CardContent>
+      )}
+    </Card>
+  )
+}
+
+// 内容：Markdown 渲染（与「对话列表」里 assistant 文本气泡的渲染方式一致），
+// 让最终回复正文可直接阅读，而不是看一整块 Markdown 源码。
+function SseContentCard({ value }: { value: string }) {
+  const { t } = useTranslation()
+  const copy = useCopyText()
+  return (
+    <Card size="sm">
+      <CardHeader className="border-b border-border/60 pb-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1">
+            <CardTitle>{t("detail.sseContent")}</CardTitle>
+            <CardDescription>{t("detail.sseContentDesc")}</CardDescription>
+          </div>
+          <Button variant="ghost" size="sm" className="shrink-0" onClick={() => copy(value)}>
+            <Copy className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{t("common.copy")}</span>
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <div className="max-h-[40rem] overflow-auto">
+          <MarkdownRenderer text={value} />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// SSE 可读区：拆成「思考过程」+「内容」两段。两段都空时保留旧的「没有可拼接的
+// 回复」空态，便于排查未提取到文本的流式响应。
+function SseReadableSections({
+  reasoning,
+  content,
+}: {
+  reasoning: string
+  content: string
+}) {
+  const { t } = useTranslation()
+  const reasoningTrim = reasoning.trim()
+  const contentTrim = content.trim()
+  const hasReasoning = reasoningTrim.length > 0
+  const hasContent = contentTrim.length > 0 && contentTrim !== "{}"
+
+  if (!hasReasoning && !hasContent) {
+    return (
+      <Card size="sm">
+        <CardHeader className="border-b border-border/60">
+          <CardTitle>{t("detail.sseConcat")}</CardTitle>
+          <CardDescription>{t("detail.sseConcatDesc")}</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-4">
+          <Empty className="border-border/70">
+            <EmptyHeader>
+              <EmptyTitle>{t("detail.noSseConcat")}</EmptyTitle>
+              <EmptyDescription>{t("detail.noSseConcatDesc")}</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {hasReasoning && <SseReasoningCard value={reasoningTrim} />}
+      {hasContent && <SseContentCard value={contentTrim} />}
+    </div>
+  )
+}
+
 export function DetailView({
   detail,
   error,
@@ -154,9 +288,9 @@ export function DetailView({
   const originalHeadersText = JSON.stringify(record.original_headers ?? {}, null, 2)
   const forwardHeadersText = JSON.stringify(record.forward_headers ?? {}, null, 2)
   const responseHeadersText = JSON.stringify(record.response_headers ?? {}, null, 2)
-  const readableSseText = timing.has_streaming_content
-    ? extractReadableSseText(record.response_payload)
-    : ""
+  const sseSegments = timing.has_streaming_content
+    ? extractReadableSseSegments(record.response_payload)
+    : { reasoning: "", content: "" }
 
   const inputTokens = usage.uncached_input_tokens ?? usage.input_tokens ?? usage.total_input_tokens ?? 0
   const outputTokens = usage.output_tokens ?? usage.total_output_tokens ?? 0
@@ -369,13 +503,7 @@ export function DetailView({
       <TabsContent value="response" className="mt-0">
         <div className="space-y-3">
           {timing.has_streaming_content ? (
-            <ReadonlyTextCard
-              title={t("detail.sseConcat")}
-              description={t("detail.sseConcatDesc")}
-              value={readableSseText}
-              emptyTitle={t("detail.noSseConcat")}
-              emptyDescription={t("detail.noSseConcatDesc")}
-            />
+            <SseReadableSections reasoning={sseSegments.reasoning} content={sseSegments.content} />
           ) : null}
           <PayloadPanel
             title={t("detail.responseBody")}
