@@ -47,6 +47,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let app = Router::new()
         .route("/health", get(health_handler))
+        // 部分客户端会在配置 Base URL 时用 HEAD {base}/api/hello 探测服务可达性。
+        // 类型强制前缀是 LRS 的公开入口，因此在本地终止探测，避免落入需要模型的代理路由。
+        .route("/api/hello", get(health_handler))
+        .route("/openai/api/hello", get(health_handler))
+        .route("/anthropic/api/hello", get(health_handler))
         .route("/v1/models", get(models_handler))
         .route("/openai/v1/models", get(models_handler))
         .route("/anthropic/v1/models", get(models_handler))
