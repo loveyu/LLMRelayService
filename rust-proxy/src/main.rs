@@ -119,7 +119,7 @@ async fn models_handler(
         model_set.insert(alias.clone());
     }
     let data: Vec<serde_json::Value> = model_set
-        .into_iter()
+        .iter()
         .map(|id| {
             serde_json::json!({
                 "id": id,
@@ -129,12 +129,48 @@ async fn models_handler(
             })
         })
         .collect();
+    // codex-cli(>=0.148) 启动时请求 {base_url}/models 并按自有 ModelInfo 结构
+    // (顶层 `models` 数组, codex-rs/protocol/src/openai_models.rs)解码; 缺少该
+    // 字段会解码失败并在 TUI 无限重试, 状态栏停在 "model: loading"。
+    // 这里为每个模型附加一份最小合法 ModelInfo(与 bun 侧 openai-models-payload.ts
+    // 同因同解); codex 的 ModelsResponse 与标准 OpenAI 客户端都忽略未知字段,
+    // 双方互不影响。
+    let codex_models: Vec<serde_json::Value> = model_set
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            serde_json::json!({
+                "slug": id,
+                "display_name": id,
+                "description": null,
+                // 通用档位: 不假设上游模型支持 xhigh 及以上
+                "default_reasoning_level": "medium",
+                "supported_reasoning_levels": [
+                    {"effort": "low", "description": "Fast responses with lighter reasoning"},
+                    {"effort": "medium", "description": "Balances speed and reasoning depth for everyday tasks"},
+                    {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+                ],
+                "shell_type": "shell_command",
+                "visibility": "list",
+                "supported_in_api": true,
+                "priority": index + 1,
+                "availability_nux": null,
+                "upgrade": null,
+                "support_verbosity": true,
+                "default_verbosity": "medium",
+                "apply_patch_tool_type": "freeform",
+                "truncation_policy": {"mode": "tokens", "limit": 10000},
+                "experimental_supported_tools": [],
+            })
+        })
+        .collect();
     (
         axum::http::StatusCode::OK,
         [("content-type", "application/json")],
         serde_json::to_string(&serde_json::json!({
             "object": "list",
             "data": data,
+            "models": codex_models,
         }))
         .unwrap_or_default(),
     )
