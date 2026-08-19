@@ -18,6 +18,7 @@ import { recordRequestPerfSample, trackRequestStart, trackRequestEnd } from './p
 import { elapsedPerfMs, getMaxPerfPhase, nowPerfMs, roundPerfMs, shouldLogRequestPerf } from './perf-detail';
 import { PAYLOAD_LOG_LIMIT_BYTES } from './logging-constants';
 import { ensureModelCatalogLoaded, lookupModelContext } from './model-catalog';
+import { buildOpenAiModelsPayload } from './openai-models-payload';
 import { initializeTokenEstimator } from './token-estimator';
 import { applyCorsHeaders, createCorsPreflightResponse, withCorsHeaders } from './cors';
 import { getGatewayTimeoutSettings, selectUpstreamFirstByteTimeoutMs } from './gateway-timeouts';
@@ -30,7 +31,6 @@ import {
   transformChatCompletionsResponseToResponses,
 } from './openai-responses-chat-compat';
 
-const SYNTHETIC_MODEL_CREATED = 0;
 const SYNTHETIC_ANTHROPIC_MODEL_CREATED_AT = '1970-01-01T00:00:00Z';
 
 interface AnalyticsDataPoint {
@@ -254,25 +254,8 @@ export function parseResponseUsage(body: string, upstreamType: UpstreamType = 'a
   return parseUsageForProvider(body, upstreamType);
 }
 
-function buildOpenAiModelsPayload(type?: UpstreamType) {
-  const models = type == null
-    ? getModels()
-    : getModels().filter((model) => model.type === type);
-  return {
-    object: 'list',
-    data: models.map((model) => {
-      const contextWindow = model.context ?? lookupModelContext(model.id);
-      return {
-        id: model.id,
-        object: 'model',
-        created: SYNTHETIC_MODEL_CREATED,
-        owned_by: 'ai-proxy',
-        ...(contextWindow !== undefined ? { context_window: contextWindow } : {}),
-      };
-    }),
-  };
-}
-
+// OpenAI 兼容 /models 响应构造(含 codex-cli 兼容的 models 字段)已抽到
+// ./openai-models-payload,这里只保留 Anthropic 侧构造。
 function buildAnthropicModelsPayload(type?: UpstreamType) {
   const models = type == null
     ? getModels()
@@ -297,13 +280,13 @@ function buildAnthropicModelsPayload(type?: UpstreamType) {
 app.get('/v1/models', async (c) => {
   await ensureProviderConfigsLoaded();
   await ensureModelCatalogLoaded();
-  return c.json(buildOpenAiModelsPayload());
+  return c.json(buildOpenAiModelsPayload(getModels()));
 });
 
 app.get('/openai/v1/models', async (c) => {
   await ensureProviderConfigsLoaded();
   await ensureModelCatalogLoaded();
-  return c.json(buildOpenAiModelsPayload('openai'));
+  return c.json(buildOpenAiModelsPayload(getModels().filter((model) => model.type === 'openai')));
 });
 
 app.get('/anthropic/v1/models', async (c) => {
