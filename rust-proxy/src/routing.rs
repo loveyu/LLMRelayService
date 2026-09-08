@@ -240,7 +240,7 @@ pub fn build_route_result(
         resolved_model: None,
         virtual_model: None,
         return_real_model: false,
-        responses_mode: entry.responses_mode.clone(),
+        responses_mode: entry.effective_responses_mode(),
     }
 }
 

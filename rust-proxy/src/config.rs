@@ -86,6 +86,32 @@ pub struct ConfigEntry {
     pub claude_code_compat: bool,
 }
 
+impl ConfigEntry {
+    /// Resolve the OpenAI Responses mode exactly as the TS routing layer does.
+    ///
+    /// Provider persistence stores this setting in `extraFields.responsesMode`, while
+    /// newer sync payloads may also send the top-level `responsesMode` field. Rust must
+    /// accept both forms and preserve the OpenAI default of `native`.
+    pub fn effective_responses_mode(&self) -> Option<OpenAiResponsesMode> {
+        if self.upstream_type != UpstreamType::OpenAI {
+            return None;
+        }
+
+        self.responses_mode
+            .clone()
+            .or_else(|| {
+                let stored_mode = self.extra_fields.as_ref()?.get("responsesMode")?.as_str()?;
+                match stored_mode {
+                    "native" => Some(OpenAiResponsesMode::Native),
+                    "chat_compat" => Some(OpenAiResponsesMode::ChatCompat),
+                    "disabled" => Some(OpenAiResponsesMode::Disabled),
+                    _ => None,
+                }
+            })
+            .or(Some(OpenAiResponsesMode::Native))
+    }
+}
+
 fn default_upstream_type() -> UpstreamType {
     UpstreamType::OpenAI
 }
@@ -216,6 +242,59 @@ impl Default for SyncConfigPayload {
             timeouts: default_timeouts(),
             api_keys: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_entry(value: serde_json::Value) -> ConfigEntry {
+        serde_json::from_value(value).expect("valid config entry")
+    }
+
+    #[test]
+    fn reads_responses_mode_from_persisted_extra_fields() {
+        let entry = config_entry(serde_json::json!({
+            "type": "openai",
+            "targetBaseUrl": "https://upstream.example/v1",
+            "extraFields": { "responsesMode": "chat_compat" }
+        }));
+
+        assert_eq!(entry.effective_responses_mode(), Some(OpenAiResponsesMode::ChatCompat));
+    }
+
+    #[test]
+    fn top_level_responses_mode_overrides_persisted_extra_fields() {
+        let entry = config_entry(serde_json::json!({
+            "type": "openai",
+            "targetBaseUrl": "https://upstream.example/v1",
+            "responsesMode": "disabled",
+            "extraFields": { "responsesMode": "chat_compat" }
+        }));
+
+        assert_eq!(entry.effective_responses_mode(), Some(OpenAiResponsesMode::Disabled));
+    }
+
+    #[test]
+    fn openai_responses_mode_defaults_to_native() {
+        let entry = config_entry(serde_json::json!({
+            "type": "openai",
+            "targetBaseUrl": "https://upstream.example/v1"
+        }));
+
+        assert_eq!(entry.effective_responses_mode(), Some(OpenAiResponsesMode::Native));
+    }
+
+    #[test]
+    fn anthropic_provider_has_no_responses_mode() {
+        let entry = config_entry(serde_json::json!({
+            "type": "anthropic",
+            "targetBaseUrl": "https://upstream.example",
+            "extraFields": { "responsesMode": "chat_compat" }
+        }));
+
+        assert_eq!(entry.effective_responses_mode(), None);
     }
 }
 
