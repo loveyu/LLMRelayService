@@ -201,7 +201,11 @@ pub async fn proxy_handler(
         let t_total = Instant::now();
 
         // ── OpenAI Responses API handling ──────────────────────────────
-        let is_responses = responses::is_responses_endpoint(pathname);
+        // Route matching uses the type-prefix-normalized path. Responses handling must do
+        // the same; otherwise `/openai/v1/responses` is forwarded unchanged and a
+        // `chat_compat` provider receives the unsupported upstream `/v1/responses` path.
+        // The resolved target also covers explicit `/providers/{name}/...` routes.
+        let is_responses = responses::is_responses_request(&stripped_path, &route.target_url);
         let responses_mode = route.responses_mode.as_ref();
         let mut converting_responses = false;
 

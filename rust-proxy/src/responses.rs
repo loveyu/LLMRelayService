@@ -24,14 +24,29 @@ pub fn is_responses_endpoint(pathname: &str) -> bool {
     pathname == "/v1/responses"
 }
 
+pub fn is_responses_request(pathname: &str, target_url: &str) -> bool {
+    let (target_path, _) = split_url_suffix(target_url);
+    is_responses_endpoint(pathname) || target_path.ends_with("/responses")
+}
+
 pub fn rewrite_responses_to_chat_url(target_url: &str) -> String {
-    if let Some(stripped) = target_url.strip_suffix("/responses") {
-        format!("{}/chat/completions", stripped)
-    } else if target_url.ends_with('/') {
-        format!("{}chat/completions", target_url)
+    let (target_path, suffix) = split_url_suffix(target_url);
+    let rewritten = if let Some(stripped) = target_path.strip_suffix("/responses") {
+        format!("{stripped}/chat/completions")
+    } else if target_path.ends_with('/') {
+        format!("{target_path}chat/completions")
     } else {
-        format!("{}/chat/completions", target_url)
-    }
+        format!("{target_path}/chat/completions")
+    };
+    format!("{rewritten}{suffix}")
+}
+
+fn split_url_suffix(target_url: &str) -> (&str, &str) {
+    let suffix_start = target_url
+        .char_indices()
+        .find_map(|(index, character)| matches!(character, '?' | '#').then_some(index))
+        .unwrap_or(target_url.len());
+    target_url.split_at(suffix_start)
 }
 
 pub fn convert_responses_to_chat_request(body: &[u8]) -> Result<Vec<u8>, (u16, String)> {
@@ -828,4 +843,43 @@ fn split_think_tags(text: &str) -> (String, String) {
 fn strip_think_tags(text: &str) -> String {
     let (_, out) = split_think_tags(text);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_type_forced_responses_after_path_normalization() {
+        let (stripped_path, _) = crate::routing::parse_type_forced_prefix("/openai/v1/responses");
+
+        assert_eq!(stripped_path, "/v1/responses");
+        assert!(is_responses_request(&stripped_path, "https://upstream.example/v1/not-responses"));
+    }
+
+    #[test]
+    fn recognizes_responses_from_explicit_route_target() {
+        assert!(is_responses_request(
+            "/providers/kiro-openai/v1/responses",
+            "https://upstream.example/v1/responses?trace=true"
+        ));
+    }
+
+    #[test]
+    fn ignores_non_responses_requests() {
+        assert!(!is_responses_request(
+            "/v1/chat/completions",
+            "https://upstream.example/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn rewrites_responses_url_and_preserves_query() {
+        assert_eq!(
+            rewrite_responses_to_chat_url(
+                "https://upstream.example/v1/responses?trace=true&mode=compat"
+            ),
+            "https://upstream.example/v1/chat/completions?trace=true&mode=compat"
+        );
+    }
 }
