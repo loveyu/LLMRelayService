@@ -2066,16 +2066,63 @@ export async function getProviderRecentHttpStatuses(limit = 3): Promise<Provider
     ))
     .as('ranked_provider_http_statuses');
 
-  const rows = await db.select().from(rankedRequests)
-    .where(or(
-      lte(rankedRequests.channelRank, normalizedLimit),
-      lte(rankedRequests.modelRank, normalizedLimit),
-    ));
+  // 一次 fallback 请求包含两次真实的上游结果：原渠道的首次失败，以及最终渠道的
+  // 终态响应。前一条由 rankedRequests 归属到原渠道；这里把后者单独加入最终渠道，
+  // 避免成功承接 fallback 的渠道状态长期停留在旧请求。
+  const hasDistinctFinalAttempt = or(
+    and(
+      isNotNull(consoleRequests.originalRoutePrefix),
+      ne(consoleRequests.originalRoutePrefix, consoleRequests.routePrefix),
+    ),
+    and(
+      isNotNull(consoleRequests.originalRequestModel),
+      ne(consoleRequests.originalRequestModel, consoleRequests.requestModel),
+    ),
+    ne(consoleRequests.initialResponseStatus, consoleRequests.responseStatus),
+  ) as SQL;
+  const finalChannelRank = sql<number>`row_number() over (
+    partition by ${consoleRequests.routePrefix}
+    order by ${consoleRequests.createdAt} desc
+  )`.as('channel_rank');
+  const finalModelRank = sql<number>`row_number() over (
+    partition by ${consoleRequests.routePrefix}, ${consoleRequests.requestModel}
+    order by ${consoleRequests.createdAt} desc
+  )`.as('model_rank');
+  const rankedFinalAttempts = db.select({
+    routePrefix: consoleRequests.routePrefix,
+    requestModel: consoleRequests.requestModel,
+    responseStatus: consoleRequests.responseStatus,
+    createdAt: consoleRequests.createdAt,
+    completedAt: consoleRequests.completedAt,
+    channelRank: finalChannelRank,
+    modelRank: finalModelRank,
+  })
+    .from(consoleRequests)
+    .where(and(
+      sql`${consoleRequests.initialResponseStatus} > 0`,
+      isNotNull(consoleRequests.responseStatus),
+      hasDistinctFinalAttempt,
+      excludeConnectivityTests(),
+    ))
+    .as('ranked_provider_final_attempts');
+
+  const [initialRows, finalRows] = await Promise.all([
+    db.select().from(rankedRequests)
+      .where(or(
+        lte(rankedRequests.channelRank, normalizedLimit),
+        lte(rankedRequests.modelRank, normalizedLimit),
+      )),
+    db.select().from(rankedFinalAttempts)
+      .where(or(
+        lte(rankedFinalAttempts.channelRank, normalizedLimit),
+        lte(rankedFinalAttempts.modelRank, normalizedLimit),
+      )),
+  ]);
 
   const channels = new Map<string, RecentHttpStatusPoint[]>();
   const models = new Map<string, Map<string, RecentHttpStatusPoint[]>>();
 
-  for (const row of rows) {
+  for (const row of [...initialRows, ...finalRows]) {
     const statusCode = normalizeNullableNumber(row.responseStatus);
     if (statusCode == null) continue;
     const createdAt = normalizeNumber(row.createdAt);
@@ -2103,10 +2150,12 @@ export async function getProviderRecentHttpStatuses(limit = 3): Promise<Provider
 
   for (const points of channels.values()) {
     points.sort((left, right) => right.createdAt - left.createdAt);
+    points.splice(normalizedLimit);
   }
   for (const channelModels of models.values()) {
     for (const points of channelModels.values()) {
       points.sort((left, right) => right.createdAt - left.createdAt);
+      points.splice(normalizedLimit);
     }
   }
 

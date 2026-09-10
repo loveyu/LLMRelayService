@@ -71,7 +71,7 @@ describe('getProviderRecentHttpStatuses', () => {
     ]);
   });
 
-  it('uses the initial provider failure and exposes it only in the error-filtered log list', async () => {
+  it('keeps both the initial provider failure and the final fallback success', async () => {
     await db.insert(consoleRequests).values({
       ...requestRow('recovered-429', 'fallback-channel', 'fallback-model', 200, 100, 80),
       responseStatusText: 'OK',
@@ -91,7 +91,12 @@ describe('getProviderRecentHttpStatuses', () => {
     expect(statuses.models.get('primary-channel')?.get('primary-model')).toEqual([
       { statusCode: 429, createdAt: 100, durationMs: 25 },
     ]);
-    expect(statuses.channels.has('fallback-channel')).toBe(false);
+    expect(statuses.channels.get('fallback-channel')).toEqual([
+      { statusCode: 200, createdAt: 100, durationMs: 80 },
+    ]);
+    expect(statuses.models.get('fallback-channel')?.get('fallback-model')).toEqual([
+      { statusCode: 200, createdAt: 100, durationMs: 80 },
+    ]);
 
     const defaultLogs = await listConsoleRequests();
     expect(defaultLogs.requests[0]).toMatchObject({
