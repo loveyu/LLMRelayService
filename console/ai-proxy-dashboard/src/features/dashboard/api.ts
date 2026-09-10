@@ -295,6 +295,15 @@ export function updateModelMetadata(
   })
 }
 
+export function resetModelMetadata(
+  channelName: string,
+  modelId: string,
+): Promise<GatewayModel> {
+  return requestJson(`/__console/api/models/${encodeURIComponent(channelName)}/${encodeURIComponent(modelId)}/metadata`, {
+    method: "DELETE",
+  })
+}
+
 export function fetchUpstreamModels(channelName: string): Promise<{ models: Array<{ id: string }> }> {
   return requestJson(`/__console/api/providers/${encodeURIComponent(channelName)}/upstream-models`)
 }

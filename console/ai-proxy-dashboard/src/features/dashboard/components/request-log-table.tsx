@@ -17,6 +17,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import type { ConsoleRequestListItem } from "@/features/dashboard/types"
 import type { RequestSortKey, SortDirection } from "@/features/dashboard/api"
@@ -266,7 +267,7 @@ export function RequestLogTable({
         {/* Header row — desktop only; mobile cards have no column header */}
         {!isMobile && (
           <div
-            className="grid shrink-0 grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border px-3 py-2 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground sm:grid-cols-[60px_78px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
+            className="grid shrink-0 grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border px-3 py-2 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground sm:grid-cols-[140px_156px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
           >
             <span>
               <SortButton
@@ -343,6 +344,7 @@ export function RequestLogTable({
                   const inputTokens = item.response_usage?.uncached_input_tokens ?? item.response_usage?.input_tokens ?? 0
                   const outputTokens = item.response_usage?.output_tokens ?? item.response_usage?.total_output_tokens ?? 0
                   const st = statusStyle(item.response_status)
+                  const source = item.client_label ?? item.api_key_name
 
                   return (
                     <div
@@ -350,24 +352,32 @@ export function RequestLogTable({
                       onClick={() => onSelect(item.request_id)}
                       onMouseEnter={() => setHoveredId(item.request_id)}
                       onMouseLeave={() => setHoveredId(null)}
-                      className="grid cursor-pointer grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border/50 border-l-[3px] px-3 py-2.5 text-xs transition-colors sm:grid-cols-[60px_78px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
+                      className="grid cursor-pointer grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border/50 border-l-[3px] px-3 py-2.5 text-xs transition-colors sm:grid-cols-[140px_156px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
                       style={{
                         borderLeftColor: isSelected ? "var(--primary)" : isHovered ? "var(--accent-foreground)" : "transparent",
                         background: isSelected ? "var(--accent)" : isHovered ? "var(--accent/50)" : "transparent",
                       }}
                     >
                       {/* 时间 */}
-                      <span className="font-mono text-[11px] text-muted-foreground">
+                      <span className="whitespace-nowrap font-mono text-[11px] text-muted-foreground">
                         {formatTime(item.created_at)}
                       </span>
 
                       {/* Key */}
-                      <span
-                        className="hidden truncate text-[11.5px] text-muted-foreground sm:block"
-                        title={item.client_label ?? item.api_key_name ?? ""}
-                      >
-                        {item.client_label ?? item.api_key_name ?? "—"}
-                      </span>
+                      {source ? (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="hidden truncate text-[11.5px] text-muted-foreground sm:block">
+                                {source}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-md break-all">{source}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ) : (
+                        <span className="hidden text-[11.5px] text-muted-foreground sm:block">—</span>
+                      )}
 
                       {/* 渠道 / 模型 */}
                       <span className="truncate">

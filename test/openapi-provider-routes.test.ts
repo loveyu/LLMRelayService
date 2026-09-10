@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Hono } from 'hono';
 import { deleteProvider, resetProviderConfigCache } from '../src/config';
+import { deleteModelMetadataOverride } from '../src/model-metadata-overrides';
 import { registerOpenApiRoutes } from '../src/openapi-routes';
 
 const TOKEN = 'test-openapi-routes-key';
@@ -39,6 +40,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  await deleteModelMetadataOverride(CHANNEL, 'probe-model');
   try {
     await deleteProvider(CHANNEL);
   } catch {
@@ -97,6 +99,40 @@ describe('openapi provider routes', () => {
     expect((await call('/providers/ghost', { method: 'DELETE' })).status).toBe(404);
     expect((await call('/providers/ghost/test', { method: 'POST', body: {} })).status).toBe(404);
     expect((await call('/providers/ghost/upstream-models')).status).toBe(404);
+  });
+
+  it('requires metadata on save and resets manual overrides explicitly', async () => {
+    await call('/providers', {
+      method: 'POST',
+      body: {
+        channelName: CHANNEL,
+        type: 'openai',
+        targetBaseUrl: 'https://example.com/v1',
+        models: ['probe-model'],
+      },
+    });
+
+    const emptyMetadata = await call(`/models/${CHANNEL}/probe-model/metadata`, {
+      method: 'PATCH',
+      body: {},
+    });
+    expect(emptyMetadata.status).toBe(400);
+    expect((await emptyMetadata.json()).error).toContain('至少需要填写一项模型元数据');
+
+    const metadata = await call(`/models/${CHANNEL}/probe-model/metadata`, {
+      method: 'PATCH',
+      body: { context: 123456 },
+    });
+    expect(metadata.status).toBe(200);
+    const metadataBody = await metadata.json();
+    expect(metadataBody.data.context).toBe(123456);
+    expect(metadataBody.data.override.context).toBe(123456);
+
+    const resetMetadata = await call(`/models/${CHANNEL}/probe-model/metadata`, {
+      method: 'DELETE',
+    });
+    expect(resetMetadata.status).toBe(200);
+    expect((await resetMetadata.json()).data.override).toBeUndefined();
   });
 
   it('exposes the channel-management endpoints the console has', async () => {

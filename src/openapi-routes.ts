@@ -40,6 +40,7 @@ import {
   listChannelModelsWithMetadata,
   listUpstreamModelsForChannel,
   previewUpstreamModels,
+  resetChannelModelMetadata,
   setChannelModelMetadata,
   testProviderConnectivity,
   type AdminResult,
@@ -273,6 +274,11 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
   v1.patch('/models/:channelName/:modelId/metadata', async (c) => {
     const payload = await c.req.json().catch(() => ({}));
     const result = await setChannelModelMetadata(c.req.param('channelName'), c.req.param('modelId'), payload);
+    return jsonFromAdminResult(c, result);
+  });
+
+  v1.delete('/models/:channelName/:modelId/metadata', async (c) => {
+    const result = await resetChannelModelMetadata(c.req.param('channelName'), c.req.param('modelId'));
     return jsonFromAdminResult(c, result);
   });
 

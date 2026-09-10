@@ -163,6 +163,7 @@ const ENDPOINTS: Endpoint[] = [
   { method: "POST", path: "/api/v1/upstream-models-preview", description: "用未保存的连接参数试拉上游模型", auth: true, body: UPSTREAM_PREVIEW_BODY },
   { method: "GET", path: "/api/v1/models", description: "获取所有启用渠道的模型（含价格/上下文）", auth: true },
   { method: "PATCH", path: "/api/v1/models/:channelName/:modelId/metadata", description: "设置模型手动价格和上下文", auth: true, body: MODEL_METADATA_BODY },
+  { method: "DELETE", path: "/api/v1/models/:channelName/:modelId/metadata", description: "清除模型手动元数据并恢复自动值", auth: true },
   { method: "GET", path: "/api/v1/settings/timeouts", description: "获取网关超时设置", auth: true },
   { method: "PATCH", path: "/api/v1/settings/timeouts", description: "修改网关超时设置", auth: true, body: TIMEOUTS_BODY },
   { method: "GET", path: "/api/v1/settings/failover", description: "获取故障转移策略", auth: true },

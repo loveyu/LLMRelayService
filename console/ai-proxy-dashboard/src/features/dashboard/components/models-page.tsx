@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Copy, Pencil, RefreshCw, Terminal, Wifi } from "lucide-react"
+import { Copy, Pencil, RefreshCw, RotateCcw, Terminal, Wifi } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -43,7 +43,7 @@ import {
 import { toast } from "@/components/ui/toast"
 import { useIsMobile } from "@/hooks/use-is-mobile"
 import { copyText } from "@/lib/clipboard"
-import { fetchModels, testProvider, updateModelMetadata } from "@/features/dashboard/api"
+import { fetchModels, resetModelMetadata, testProvider, updateModelMetadata } from "@/features/dashboard/api"
 import type { ConsoleModelPricing, GatewayModel, TestProviderResult } from "@/features/dashboard/types"
 
 function formatContext(context?: number) {
@@ -382,6 +382,9 @@ function parseMetadataDraft(
 ): ParsedModelMetadataDraft {
   const context = parseOptionalNumber(draft.context, t("models.contextLength"), t, { integer: true, min: 1 })
   const pricing = buildPricingDraft(draft, t)
+  if (context == null && pricing == null) {
+    throw new Error(t("models.metadataRequired"))
+  }
   return { context, pricing }
 }
 
@@ -416,6 +419,7 @@ export function ModelsPage({
   const [editDraft, setEditDraft] = useState<ModelMetadataDraft>({ context: "", input: "", output: "", cacheRead: "", cacheWrite: "" })
   const [editError, setEditError] = useState("")
   const [savingMetadata, setSavingMetadata] = useState(false)
+  const [resettingMetadata, setResettingMetadata] = useState(false)
 
   const loadModels = async () => {
     setLoading(true)
@@ -494,6 +498,14 @@ export function ModelsPage({
     setEditDialogOpen(true)
   }
 
+  const updateModelInLists = (updated: GatewayModel) => {
+    const updateList = (models: GatewayModel[] | null) => models?.map((model) => (
+      model.channelName === updated.channelName && model.id === updated.id ? updated : model
+    )) ?? null
+    setOpenaiModels(updateList)
+    setAntropicModels(updateList)
+  }
+
   const handleSaveMetadata = async () => {
     if (!editDialogModel) return
     setSavingMetadata(true)
@@ -503,11 +515,7 @@ export function ModelsPage({
         context: parsedDraft.context,
         pricing: parsedDraft.pricing,
       })
-      const updateList = (models: GatewayModel[] | null) => models?.map((model) => (
-        model.channelName === updated.channelName && model.id === updated.id ? updated : model
-      )) ?? null
-      setOpenaiModels(updateList)
-      setAntropicModels(updateList)
+      updateModelInLists(updated)
       setEditDialogOpen(false)
       setEditDialogModel(null)
       setEditError("")
@@ -521,6 +529,29 @@ export function ModelsPage({
       setEditError(message)
     } finally {
       setSavingMetadata(false)
+    }
+  }
+
+  const handleResetMetadata = async () => {
+    if (!editDialogModel?.override) return
+    setResettingMetadata(true)
+    setEditError("")
+    try {
+      const updated = await resetModelMetadata(editDialogModel.channelName, editDialogModel.id)
+      updateModelInLists(updated)
+      setEditDialogOpen(false)
+      setEditDialogModel(null)
+      setError("")
+      toast.success(t("models.resetSuccess"))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (message === "unauthorized") {
+        onUnauthorized()
+        return
+      }
+      setEditError(message)
+    } finally {
+      setResettingMetadata(false)
     }
   }
 
@@ -800,8 +831,17 @@ export function ModelsPage({
             </Field>
           </FieldGroup>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>{t("common.cancel")}</Button>
-            <Button type="button" disabled={savingMetadata} onClick={() => void handleSaveMetadata()}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!editDialogModel?.override || savingMetadata || resettingMetadata}
+              onClick={() => void handleResetMetadata()}
+            >
+              <RotateCcw data-icon="inline-start" className={resettingMetadata ? "animate-spin" : ""} />
+              {resettingMetadata ? t("models.resetting") : t("models.resetToAutomatic")}
+            </Button>
+            <Button type="button" variant="outline" disabled={savingMetadata || resettingMetadata} onClick={() => setEditDialogOpen(false)}>{t("common.cancel")}</Button>
+            <Button type="button" disabled={savingMetadata || resettingMetadata} onClick={() => void handleSaveMetadata()}>
               {savingMetadata ? t("common.saving") : t("common.save")}
             </Button>
           </DialogFooter>

@@ -140,8 +140,7 @@ export async function upsertModelMetadataOverride(
   const pricing = normalizePricing(input.pricing);
 
   if (context == null && pricing == null) {
-    await deleteModelMetadataOverride(normalizedChannelName, normalizedModelId);
-    return null;
+    throw new Error('至少需要填写一项模型元数据；如需清除手动值，请使用重置接口');
   }
 
   const now = Date.now();

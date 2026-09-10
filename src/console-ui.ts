@@ -14,6 +14,7 @@ import {
   listChannelModelsWithMetadata,
   listUpstreamModelsForChannel,
   previewUpstreamModels,
+  resetChannelModelMetadata,
   setChannelModelMetadata,
   testProviderConnectivity,
   type UpstreamModelsPreviewInput,
@@ -559,6 +560,18 @@ export function registerConsoleRoutes(app: Hono<any>): void {
 
     const payload = await c.req.json().catch(() => ({}));
     const result = await setChannelModelMetadata(c.req.param('channelName'), c.req.param('modelId'), payload);
+    return c.json(result.body as object, result.status);
+  });
+
+  app.delete('/__console/api/models/:channelName/:modelId/metadata', async (c) => {
+    if (!isPasswordConfigured()) {
+      return c.json({ error: 'GATEWAY_API_KEY 未设置' }, 503);
+    }
+    if (!isAuthenticated(c)) {
+      return c.json({ error: '未授权' }, 401);
+    }
+
+    const result = await resetChannelModelMetadata(c.req.param('channelName'), c.req.param('modelId'));
     return c.json(result.body as object, result.status);
   });
 

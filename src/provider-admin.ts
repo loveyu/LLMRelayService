@@ -8,7 +8,12 @@
 import { ensureProviderConfigsLoaded, getChannelModels, getProviderConfig, type ModelInfo } from './config';
 import { ensureModelCatalogLoaded, lookupModelContext } from './model-catalog';
 import { ensurePricingLoaded, getModelPricing } from './pricing';
-import { getModelOverrideKey, listModelMetadataOverrides, upsertModelMetadataOverride } from './model-metadata-overrides';
+import {
+  deleteModelMetadataOverride,
+  getModelOverrideKey,
+  listModelMetadataOverrides,
+  upsertModelMetadataOverride,
+} from './model-metadata-overrides';
 import { fetchUpstreamModelIds } from './upstream-models';
 
 export type AdminStatus = 200 | 400 | 404 | 502;
@@ -99,6 +104,37 @@ export async function setChannelModelMetadata(
               },
             }
           : {}),
+      },
+    };
+  } catch (error) {
+    return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+  }
+}
+
+/** 清除某个渠道模型的手动元数据覆盖，恢复自动价格和上下文。 */
+export async function resetChannelModelMetadata(
+  channelName: string,
+  modelId: string,
+): Promise<AdminResult> {
+  await ensureProviderConfigsLoaded();
+
+  const model = getChannelModels().find((item) => item.channelName === channelName && item.id === modelId);
+  if (!model) {
+    return { status: 404, body: { error: '模型不存在' } };
+  }
+
+  try {
+    await deleteModelMetadataOverride(channelName, modelId);
+    await Promise.all([ensureModelCatalogLoaded(), ensurePricingLoaded()]);
+    const pricing = getModelPricing(model.id);
+    const context = model.context ?? lookupModelContext(model.id);
+
+    return {
+      status: 200,
+      body: {
+        ...model,
+        context,
+        ...(pricing ? { pricing } : {}),
       },
     };
   } catch (error) {
