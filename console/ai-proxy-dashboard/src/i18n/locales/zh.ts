@@ -595,6 +595,9 @@ export default {
     providerDisabledHint: "Provider \"{{name}}\" 当前已禁用",
     showMore: "+{{count}} 个更多",
     showLess: "收起",
+    recentChannelHttp: "渠道",
+    recentModelHttp: "模型 {{model}}",
+    recentHttpNoData: "暂无请求记录",
   },
 
   // ── Routes Page ──
@@ -637,6 +640,7 @@ export default {
     routeTargetsHint: "按顺序尝试这些目标；目标可以指向 direct 或 explicit-only Provider。",
     routeTargetAdd: "添加目标",
     routeTargetPrimary: "首选",
+    routeTargetDrag: "拖拽排序",
     visibleToClients: "显示在模型列表",
     visibleToClientsHint: "启用后，此虚拟模型会出现在 /v1/models 和 API key 模型选择器中。",
     returnRealModel: "在响应中返回真实模型名",

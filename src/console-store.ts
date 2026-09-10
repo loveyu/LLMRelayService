@@ -6,7 +6,7 @@ import { getDatabaseUrl, getDbDriver } from './db/config';
 import { isTrustedTestDatabaseUrl } from './db/test-database';
 
 import { consoleRequests, consoleApiKeys } from './db/schema';
-import { eq, ne, desc, asc, and, or, sql, count, gte, isNotNull, isNull, like, notInArray, type SQL } from 'drizzle-orm';
+import { eq, ne, desc, asc, and, or, sql, count, gte, isNotNull, isNull, like, lte, notInArray, type SQL } from 'drizzle-orm';
 import { elapsedPerfMs, getMaxPerfPhase, nowPerfMs, shouldLogBackgroundPerf } from './perf-detail';
 import { recordBackgroundPerfSample } from './perf-monitor';
 import { getModelOverrideKey, listModelMetadataOverrides, type ModelMetadataOverride } from './model-metadata-overrides';
@@ -1900,6 +1900,94 @@ export async function getProviderHealthStatuses(): Promise<Record<string, Provid
   }
 
   return result;
+}
+
+export interface RecentHttpStatusPoint {
+  statusCode: number;
+  createdAt: number;
+  durationMs: number | null;
+}
+
+export interface ProviderRecentHttpStatuses {
+  channels: Map<string, RecentHttpStatusPoint[]>;
+  models: Map<string, Map<string, RecentHttpStatusPoint[]>>;
+}
+
+/**
+ * 一次查询取出渠道整体及「渠道 + 模型」两个维度的最近 HTTP 结果。
+ * 连通性测试是合成请求，不计入真实流量状态。
+ */
+export async function getProviderRecentHttpStatuses(limit = 3): Promise<ProviderRecentHttpStatuses> {
+  await consoleStoreReady;
+  const normalizedLimit = Number.isFinite(limit)
+    ? Math.min(10, Math.max(1, Math.trunc(limit)))
+    : 3;
+  const channelRank = sql<number>`row_number() over (
+    partition by ${consoleRequests.routePrefix}
+    order by ${consoleRequests.createdAt} desc
+  )`.as('channel_rank');
+  const modelRank = sql<number>`row_number() over (
+    partition by ${consoleRequests.routePrefix}, ${consoleRequests.requestModel}
+    order by ${consoleRequests.createdAt} desc
+  )`.as('model_rank');
+  const rankedRequests = db.select({
+    routePrefix: consoleRequests.routePrefix,
+    requestModel: consoleRequests.requestModel,
+    responseStatus: consoleRequests.responseStatus,
+    createdAt: consoleRequests.createdAt,
+    completedAt: consoleRequests.completedAt,
+    channelRank,
+    modelRank,
+  })
+    .from(consoleRequests)
+    .where(and(isNotNull(consoleRequests.responseStatus), excludeConnectivityTests()))
+    .as('ranked_provider_http_statuses');
+
+  const rows = await db.select().from(rankedRequests)
+    .where(or(
+      lte(rankedRequests.channelRank, normalizedLimit),
+      lte(rankedRequests.modelRank, normalizedLimit),
+    ));
+
+  const channels = new Map<string, RecentHttpStatusPoint[]>();
+  const models = new Map<string, Map<string, RecentHttpStatusPoint[]>>();
+
+  for (const row of rows) {
+    const statusCode = normalizeNullableNumber(row.responseStatus);
+    if (statusCode == null) continue;
+    const createdAt = normalizeNumber(row.createdAt);
+    const completedAt = normalizeNullableNumber(row.completedAt);
+    const point: RecentHttpStatusPoint = {
+      statusCode,
+      createdAt,
+      durationMs: completedAt == null ? null : Math.max(0, completedAt - createdAt),
+    };
+
+    if (normalizeNumber(row.channelRank) <= normalizedLimit) {
+      const channelPoints = channels.get(row.routePrefix) ?? [];
+      channelPoints.push(point);
+      channels.set(row.routePrefix, channelPoints);
+    }
+
+    if (normalizeNumber(row.modelRank) <= normalizedLimit) {
+      const channelModels = models.get(row.routePrefix) ?? new Map<string, RecentHttpStatusPoint[]>();
+      const modelPoints = channelModels.get(row.requestModel) ?? [];
+      modelPoints.push(point);
+      channelModels.set(row.requestModel, modelPoints);
+      models.set(row.routePrefix, channelModels);
+    }
+  }
+
+  for (const points of channels.values()) {
+    points.sort((left, right) => right.createdAt - left.createdAt);
+  }
+  for (const channelModels of models.values()) {
+    for (const points of channelModels.values()) {
+      points.sort((left, right) => right.createdAt - left.createdAt);
+    }
+  }
+
+  return { channels, models };
 }
 
 export interface ConsoleFilterOptions {

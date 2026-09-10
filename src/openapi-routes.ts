@@ -15,6 +15,7 @@ import {
   getConsoleRequest,
   getConsoleUsageStats,
   getProviderHealthStatuses,
+  getProviderRecentHttpStatuses,
   listConsoleRequests,
   type RequestSortKey,
   type SortDirection,
@@ -170,11 +171,19 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
   v1.get('/providers', async (c) => {
     await ensureProviderConfigsLoaded();
     const providers = getProviders();
-    const healthStatuses = await getProviderHealthStatuses();
+    const [healthStatuses, recentHttpStatuses] = await Promise.all([
+      getProviderHealthStatuses(),
+      getProviderRecentHttpStatuses(),
+    ]);
     return c.json({
       data: providers.map((provider) => ({
         ...provider,
         healthStatus: healthStatuses[provider.channelName] ?? 'no-data',
+        recentHttpStatuses: recentHttpStatuses.channels.get(provider.channelName) ?? [],
+        models: provider.models.map((model) => ({
+          ...model,
+          recentHttpStatuses: recentHttpStatuses.models.get(provider.channelName)?.get(model.model) ?? [],
+        })),
       })),
     });
   });
@@ -187,7 +196,17 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     if (!provider) {
       return c.json({ error: 'Provider not found' }, 404);
     }
-    return c.json({ data: provider });
+    const recentHttpStatuses = await getProviderRecentHttpStatuses();
+    return c.json({
+      data: {
+        ...provider,
+        recentHttpStatuses: recentHttpStatuses.channels.get(provider.channelName) ?? [],
+        models: provider.models.map((model) => ({
+          ...model,
+          recentHttpStatuses: recentHttpStatuses.models.get(provider.channelName)?.get(model.model) ?? [],
+        })),
+      },
+    });
   });
 
   v1.post('/providers', async (c) => {

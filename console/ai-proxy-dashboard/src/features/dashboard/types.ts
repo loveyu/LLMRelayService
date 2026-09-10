@@ -242,7 +242,14 @@ export type SortDirection = "asc" | "desc"
 export type ProviderModelInfo = {
   model: string
   context?: number
+  recentHttpStatuses?: RecentHttpStatusPoint[]
   [key: string]: unknown
+}
+
+export type RecentHttpStatusPoint = {
+  statusCode: number
+  createdAt: number
+  durationMs: number | null
 }
 
 export type ProviderAuthInfo = {
@@ -270,6 +277,7 @@ export type ProviderInfo = {
   autoSyncModels?: boolean
   claudeCodeCompat?: boolean
   healthStatus?: "healthy" | "degraded" | "down" | "no-data"
+  recentHttpStatuses?: RecentHttpStatusPoint[]
 }
 
 export type ConsoleProvidersPayload = {

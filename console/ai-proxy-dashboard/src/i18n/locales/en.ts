@@ -595,6 +595,9 @@ export default {
     providerDisabledHint: "Provider \"{{name}}\" is currently disabled",
     showMore: "+{{count}} more",
     showLess: "Show less",
+    recentChannelHttp: "Channel",
+    recentModelHttp: "Model {{model}}",
+    recentHttpNoData: "No request history",
   },
 
   // ── Routes Page ──
@@ -637,6 +640,7 @@ export default {
     routeTargetsHint: "Targets are tried in order for this virtual model. They may point to direct or explicit-only providers.",
     routeTargetAdd: "Add target",
     routeTargetPrimary: "Primary",
+    routeTargetDrag: "Drag to reorder",
     visibleToClients: "Show in model list",
     visibleToClientsHint: "When enabled, this virtual model appears in /v1/models and API key model selectors.",
     returnRealModel: "Return upstream real model name",

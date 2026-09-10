@@ -66,6 +66,12 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/toast"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
   createProvider,
   deleteProvider,
   fetchProvider,
@@ -81,15 +87,78 @@ import type {
   ProviderInfo,
   ProviderModelInfo,
   ProviderMutationPayload,
+  RecentHttpStatusPoint,
   RoutingVisibility,
   TestProviderResult,
 } from "@/features/dashboard/types"
+import { formatDuration, formatTime } from "@/features/dashboard/utils"
 
 export type TestStatusMap = Map<string, TestProviderResult>
 
 const typeLabels: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
+}
+
+function getHttpStatusColor(statusCode: number): string {
+  if (statusCode >= 500 && statusCode < 600) return "var(--lrs-danger)"
+  if (statusCode >= 400 && statusCode < 500) return "var(--lrs-warn)"
+  if (statusCode >= 200 && statusCode < 300) return "var(--lrs-success)"
+  return "var(--lrs-faint)"
+}
+
+function RecentHttpStatusDots({
+  label,
+  points,
+  showLabel = false,
+}: {
+  label: string
+  points?: RecentHttpStatusPoint[]
+  showLabel?: boolean
+}) {
+  const { t } = useTranslation()
+  const recentPoints = (points ?? []).slice(0, 3).reverse()
+
+  if (recentPoints.length === 0) {
+    return showLabel ? (
+      <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+        <span>{label}</span>
+        <span aria-label={t("providers.recentHttpNoData")}>--</span>
+      </span>
+    ) : null
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      {showLabel ? <span className="mr-0.5 text-[10px] text-muted-foreground">{label}</span> : null}
+      <TooltipProvider>
+        {recentPoints.map((point, index) => {
+          const tooltipLabel = `${label} · HTTP ${point.statusCode}`
+          return (
+            <Tooltip key={`${point.createdAt}:${point.statusCode}:${index}`}>
+              <TooltipTrigger asChild>
+                <span
+                  tabIndex={0}
+                  aria-label={tooltipLabel}
+                  className="block size-2 shrink-0 cursor-pointer rounded-full outline-none ring-offset-1 focus-visible:ring-2 focus-visible:ring-ring"
+                  style={{ background: getHttpStatusColor(point.statusCode) }}
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                />
+              </TooltipTrigger>
+              <TooltipContent className="flex max-w-sm flex-col items-start gap-0.5">
+                <span>{label}</span>
+                <span>{formatTime(point.createdAt)}</span>
+                <span className="font-mono">
+                  HTTP {point.statusCode} · {formatDuration(point.durationMs)}
+                </span>
+              </TooltipContent>
+            </Tooltip>
+          )
+        })}
+      </TooltipProvider>
+    </span>
+  )
 }
 
 // ── Preset channels: one-click fill for `type`, `targetBaseUrl`, and a suggested
@@ -189,6 +258,7 @@ type DialogMode = "create" | "edit"
 type ModelRowState = {
   id: string
   model: string
+  recentHttpStatuses?: RecentHttpStatusPoint[]
 }
 
 type ProviderFormState = {
@@ -222,10 +292,11 @@ function generateId(): string {
 }
 
 function createModelRow(model?: ProviderModelInfo): ModelRowState {
-  const { model: modelName = "" } = model ?? {}
+  const { model: modelName = "", recentHttpStatuses } = model ?? {}
   return {
     id: generateId(),
     model: modelName,
+    recentHttpStatuses,
   }
 }
 
@@ -1061,6 +1132,12 @@ export function ProvidersPage({
                     className="inline-flex items-center gap-1 rounded-lg border border-[#cfe8ea] bg-[#eef8f8] px-2.5 py-1 text-xs text-[#0c7c86]"
                   >
                     {row.model}
+                    {activeProvider?.enabled ? (
+                      <RecentHttpStatusDots
+                        label={t("providers.recentModelHttp", { model: row.model })}
+                        points={row.recentHttpStatuses}
+                      />
+                    ) : null}
                     <button
                       type="button"
                       className="-mr-1 rounded p-1 text-[#0c7c86]/60 transition-colors hover:bg-[#0c7c86]/10 hover:text-destructive"
@@ -1279,12 +1356,19 @@ export function ProvidersPage({
                       dialogOpen && dialogMode === "edit" && activeProvider?.channelName === provider.channelName
                     const testResult = testResults.get(provider.channelName)
                     return (
-                      <button
-                        type="button"
+                      <div
+                        role="button"
+                        tabIndex={0}
                         key={provider.channelName}
                         onClick={() => void openEditDialog(provider)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault()
+                            void openEditDialog(provider)
+                          }
+                        }}
                         className={cn(
-                          "block w-full border-b border-l-[3px] border-border/60 px-5 py-4 text-left transition-colors",
+                          "block w-full cursor-pointer border-b border-l-[3px] border-border/60 px-5 py-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                           selected ? "border-l-primary bg-accent/50" : "border-l-transparent hover:bg-accent/30",
                           !provider.enabled && "opacity-60",
                         )}
@@ -1310,7 +1394,16 @@ export function ProvidersPage({
                               style={{ background: testResult.status === "ok" ? "var(--lrs-success)" : "var(--lrs-danger)" }}
                             />
                           ) : null}
-                          <span className="ml-auto font-mono text-[11px] text-muted-foreground">priority {provider.priority}</span>
+                          <span className="ml-auto inline-flex items-center gap-3">
+                            {provider.enabled ? (
+                              <RecentHttpStatusDots
+                                label={t("providers.recentChannelHttp")}
+                                points={provider.recentHttpStatuses}
+                                showLabel
+                              />
+                            ) : null}
+                            <span className="font-mono text-[11px] text-muted-foreground">priority {provider.priority}</span>
+                          </span>
                         </div>
                         <div className="mt-1.5 font-mono text-[11px] text-muted-foreground">{provider.targetBaseUrl}</div>
                         {provider.models.length ? (
@@ -1318,9 +1411,15 @@ export function ProvidersPage({
                             {provider.models.slice(0, 4).map((m) => (
                               <span
                                 key={m.model}
-                                className="rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+                                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
                               >
-                                {m.model}
+                                <span>{m.model}</span>
+                                {provider.enabled ? (
+                                  <RecentHttpStatusDots
+                                    label={t("providers.recentModelHttp", { model: m.model })}
+                                    points={m.recentHttpStatuses}
+                                  />
+                                ) : null}
                               </span>
                             ))}
                             {provider.models.length > 4 ? (
@@ -1328,7 +1427,7 @@ export function ProvidersPage({
                             ) : null}
                           </div>
                         ) : null}
-                      </button>
+                      </div>
                     )
                   })
                 )}
@@ -1487,6 +1586,12 @@ export function ProvidersPage({
                       className="inline-flex items-center gap-1 rounded-lg border border-[#cfe8ea] bg-[#eef8f8] px-2.5 py-1 text-xs text-[#0c7c86]"
                     >
                       {row.model}
+                      {dialogMode === "edit" && activeProvider?.enabled ? (
+                        <RecentHttpStatusDots
+                          label={t("providers.recentModelHttp", { model: row.model })}
+                          points={row.recentHttpStatuses}
+                        />
+                      ) : null}
                       <button
                         type="button"
                         className="-mr-1 rounded p-1 text-[#0c7c86]/60 transition-colors hover:bg-[#0c7c86]/10 hover:text-destructive"

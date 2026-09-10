@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react"
-import { ArrowRight, CheckCircle, GitFork, Loader2, MapIcon, Plus, RefreshCw, RotateCcw, Save, Trash2, TriangleAlert, Wifi, X, XCircle } from "lucide-react"
+import { ArrowRight, CheckCircle, GitFork, GripVertical, Loader2, MapIcon, Plus, RefreshCw, RotateCcw, Save, Trash2, TriangleAlert, Wifi, X, XCircle } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import { cn } from "@/lib/utils"
@@ -373,6 +373,8 @@ function AliasForm({
   onChange: (patch: Partial<typeof EMPTY_FORM>) => void
 }) {
   const { t } = useTranslation()
+  const [draggedTargetId, setDraggedTargetId] = useState<string | null>(null)
+  const [dragOverTargetId, setDragOverTargetId] = useState<string | null>(null)
   const targets = draft.targets.length > 0 ? draft.targets : [createTargetDraft()]
   const updateTarget = (id: string, patch: Partial<RouteTargetDraft>) => {
     onChange({
@@ -382,6 +384,25 @@ function AliasForm({
   const removeTarget = (id: string) => {
     if (targets.length <= 1) return
     onChange({ targets: targets.filter((target) => target.id !== id) })
+  }
+  const resetTargetDrag = () => {
+    setDraggedTargetId(null)
+    setDragOverTargetId(null)
+  }
+  const dropTarget = (event: React.DragEvent<HTMLDivElement>, targetId: string) => {
+    event.preventDefault()
+    const sourceId = draggedTargetId || event.dataTransfer.getData("text/plain")
+    const sourceIndex = targets.findIndex((target) => target.id === sourceId)
+    const targetIndex = targets.findIndex((target) => target.id === targetId)
+    if (sourceIndex >= 0 && targetIndex >= 0 && sourceIndex !== targetIndex) {
+      const reordered = [...targets]
+      const [moved] = reordered.splice(sourceIndex, 1)
+      if (moved) {
+        reordered.splice(targetIndex, 0, moved)
+        onChange({ targets: reordered })
+      }
+    }
+    resetTargetDrag()
   }
 
   return (
@@ -414,7 +435,38 @@ function AliasForm({
             const availableModels = selectedProvider?.models ?? []
 
             return (
-              <div key={target.id} className="grid gap-2 border border-border/70 p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+              <div
+                key={target.id}
+                className={cn(
+                  "grid gap-2 border border-border/70 p-3 transition-colors md:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto]",
+                  draggedTargetId === target.id && "opacity-50",
+                  dragOverTargetId === target.id && draggedTargetId !== target.id && "border-primary bg-accent/30",
+                )}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = "move"
+                  setDragOverTargetId(target.id)
+                }}
+                onDrop={(event) => dropTarget(event, target.id)}
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  draggable={targets.length > 1}
+                  disabled={targets.length <= 1}
+                  className="cursor-grab justify-self-start text-muted-foreground active:cursor-grabbing md:self-stretch"
+                  onDragStart={(event) => {
+                    setDraggedTargetId(target.id)
+                    setDragOverTargetId(target.id)
+                    event.dataTransfer.effectAllowed = "move"
+                    event.dataTransfer.setData("text/plain", target.id)
+                  }}
+                  onDragEnd={resetTargetDrag}
+                >
+                  <GripVertical data-icon="inline-start" />
+                  {t("routes.routeTargetDrag")}
+                </Button>
                 <Select value={target.provider} onValueChange={(value) => updateTarget(target.id, { provider: value, model: "" })}>
                   <SelectTrigger>
                     <SelectValue placeholder={t("routes.selectProvider")} />

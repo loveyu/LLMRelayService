@@ -5,7 +5,7 @@ import { existsSync, statSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { createProvider, deleteProvider, ensureProviderConfigsLoaded, getProviderInfo, getProviders, refreshRoutingConfigCache, resolveRoute, toggleProvider, updateProvider } from './config';
 import { syncConfigToRust } from './rust-bridge';
-import { getConsoleRequest, listConsoleRequests, getProviderHealthStatuses, getConsoleUsageStats, getConsoleFilterOptions, getMaxDebugRecords, type RequestSortKey, type SortDirection } from './console-store';
+import { getConsoleRequest, listConsoleRequests, getProviderHealthStatuses, getProviderRecentHttpStatuses, getConsoleUsageStats, getConsoleFilterOptions, getMaxDebugRecords, type RequestSortKey, type SortDirection } from './console-store';
 import { createManagedApiKey, deleteManagedApiKey, getManagedApiKey, listManagedApiKeys, renameManagedApiKey, setApiKeyAllowedModels, setApiKeyCostQuota } from './api-keys';
 import { parseApiKeyCostQuotaLimit } from './api-key-quota';
 import { createModelAlias, deleteModelAlias, listModelAliases, toggleModelAlias, updateModelAlias } from './console-model-alias-store';
@@ -512,11 +512,19 @@ export function registerConsoleRoutes(app: Hono<any>): void {
 
     await ensureProviderConfigsLoaded();
     const providers = getProviders();
-    const healthStatuses = await getProviderHealthStatuses();
+    const [healthStatuses, recentHttpStatuses] = await Promise.all([
+      getProviderHealthStatuses(),
+      getProviderRecentHttpStatuses(),
+    ]);
 
     const providersWithHealth = providers.map((provider) => ({
       ...provider,
       healthStatus: healthStatuses[provider.channelName] ?? 'no-data',
+      recentHttpStatuses: recentHttpStatuses.channels.get(provider.channelName) ?? [],
+      models: provider.models.map((model) => ({
+        ...model,
+        recentHttpStatuses: recentHttpStatuses.models.get(provider.channelName)?.get(model.model) ?? [],
+      })),
     }));
 
     return c.json({ providers: providersWithHealth });
@@ -536,7 +544,15 @@ export function registerConsoleRoutes(app: Hono<any>): void {
       return c.json({ error: 'Provider 不存在' }, 404);
     }
 
-    return c.json(provider);
+    const recentHttpStatuses = await getProviderRecentHttpStatuses();
+    return c.json({
+      ...provider,
+      recentHttpStatuses: recentHttpStatuses.channels.get(provider.channelName) ?? [],
+      models: provider.models.map((model) => ({
+        ...model,
+        recentHttpStatuses: recentHttpStatuses.models.get(provider.channelName)?.get(model.model) ?? [],
+      })),
+    });
   });
 
   app.get('/__console/api/models', async (c) => {
