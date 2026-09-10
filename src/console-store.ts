@@ -98,6 +98,9 @@ export interface ConsoleRequestSnapshotInput {
   original_route_prefix: string | null;
   original_request_model: string | null;
   failover_reason: string | null;
+  initial_response_status?: number | null;
+  initial_response_status_text?: string | null;
+  initial_completed_at?: number | null;
   retry_attempt?: number;
   source_request_type?: string;
 }
@@ -136,6 +139,9 @@ interface ConsoleRequestRow {
   response_headers_json: string | null;
   response_status: number | string | null;
   response_status_text: string | null;
+  initial_response_status: number | string | null;
+  initial_response_status_text: string | null;
+  initial_completed_at: number | string | null;
   response_payload: string | null;
   response_payload_truncated: number | string;
   response_payload_truncation_reason: string | null;
@@ -185,6 +191,9 @@ export interface StoredConsoleRequest {
   response_headers: Record<string, string> | null;
   response_status: number | null;
   response_status_text: string;
+  initial_response_status: number | null;
+  initial_response_status_text: string;
+  initial_completed_at: number | null;
   response_payload: string | null;
   response_payload_truncated: boolean;
   response_payload_truncation_reason: string | null;
@@ -227,6 +236,9 @@ export interface ConsoleRequestListItem {
   request_model: string;
   response_status: number | null;
   response_status_text: string;
+  initial_response_status: number | null;
+  initial_response_status_text: string;
+  initial_completed_at: number | null;
   response_payload_truncated: boolean;
   response_payload_truncation_reason: string | null;
   response_timing: ResponseTimingForConsole;
@@ -254,6 +266,9 @@ type ConsoleRequestListRow = Pick<ConsoleRequestRow,
   | 'forwarded_summary_json'
   | 'response_status'
   | 'response_status_text'
+  | 'initial_response_status'
+  | 'initial_response_status_text'
+  | 'initial_completed_at'
   | 'response_payload_truncated'
   | 'response_payload_truncation_reason'
   | 'response_body_bytes'
@@ -968,14 +983,31 @@ function withoutConnectivityTests(base: SQL | undefined): SQL {
 
 function buildRequestWhere(filters?: ConsoleQueryFilters, options?: { requireCompletedResponse?: boolean }): SQL | undefined {
   const conditions: SQL[] = [];
+  const recoveredInitialFailure = and(
+    sql`${consoleRequests.initialResponseStatus} >= 400`,
+    sql`${consoleRequests.responseStatus} >= 200`,
+    sql`${consoleRequests.responseStatus} < 400`,
+  ) as SQL;
   if (options?.requireCompletedResponse) {
     conditions.push(isNotNull(consoleRequests.responseStatus));
   }
   if (filters?.route) {
-    conditions.push(eq(consoleRequests.routePrefix, filters.route));
+    conditions.push(filters.status === 'error'
+      ? sql`CASE
+        WHEN ${recoveredInitialFailure}
+        THEN COALESCE(${consoleRequests.originalRoutePrefix}, ${consoleRequests.routePrefix})
+        ELSE ${consoleRequests.routePrefix}
+      END = ${filters.route}`
+      : eq(consoleRequests.routePrefix, filters.route));
   }
   if (filters?.model) {
-    conditions.push(sql`${getModelBucketExpression()} = ${filters.model}`);
+    conditions.push(filters.status === 'error'
+      ? sql`CASE
+        WHEN ${recoveredInitialFailure}
+        THEN COALESCE(${consoleRequests.originalRequestModel}, ${getModelBucketExpression()})
+        ELSE ${getModelBucketExpression()}
+      END = ${filters.model}`
+      : sql`${getModelBucketExpression()} = ${filters.model}`);
   }
   if (filters?.created_after != null) {
     conditions.push(gte(consoleRequests.createdAt, filters.created_after));
@@ -983,9 +1015,13 @@ function buildRequestWhere(filters?: ConsoleQueryFilters, options?: { requireCom
 
   // 状态筛选
   if (filters?.status === "success") {
-    conditions.push(and(isNotNull(consoleRequests.responseStatus), sql`${consoleRequests.responseStatus} >= 200`, sql`${consoleRequests.responseStatus} < 400`));
+    conditions.push(and(isNotNull(consoleRequests.responseStatus), sql`${consoleRequests.responseStatus} >= 200`, sql`${consoleRequests.responseStatus} < 400`) as SQL);
   } else if (filters?.status === "error") {
-    conditions.push(or(isNull(consoleRequests.responseStatus), sql`${consoleRequests.responseStatus} >= 400`));
+    conditions.push(or(
+      isNull(consoleRequests.responseStatus),
+      sql`${consoleRequests.responseStatus} >= 400`,
+      recoveredInitialFailure,
+    ) as SQL);
   }
 
   // API Key 名称筛选
@@ -1006,7 +1042,7 @@ function buildRequestWhere(filters?: ConsoleQueryFilters, options?: { requireCom
       like(consoleRequests.routePrefix, searchPattern),
       like(consoleRequests.requestModel, searchPattern),
       like(consoleRequests.upstreamType, searchPattern),
-    ));
+    ) as SQL);
   }
 
   // 缓存状态筛选
@@ -1017,19 +1053,19 @@ function buildRequestWhere(filters?: ConsoleQueryFilters, options?: { requireCom
     conditions.push(or(
       sql`${consoleRequests.cacheReadInputTokens} > 0`,
       sql`${consoleRequests.cachedInputTokens} > 0`
-    ));
+    ) as SQL);
   } else if (filters?.cache_state === "create") {
     conditions.push(and(
       sql`${consoleRequests.cacheCreationInputTokens} > 0`,
       sql`${consoleRequests.cacheReadInputTokens} = 0`,
       sql`${consoleRequests.cachedInputTokens} = 0`
-    ));
+    ) as SQL);
   } else if (filters?.cache_state === "miss") {
     conditions.push(and(
       sql`${consoleRequests.cacheCreationInputTokens} = 0`,
       sql`${consoleRequests.cacheReadInputTokens} = 0`,
       sql`${consoleRequests.cachedInputTokens} = 0`
-    ));
+    ) as SQL);
   }
 
   return conditions.length > 0 ? and(...conditions) : undefined;
@@ -1139,6 +1175,9 @@ async function updateResponse(data: {
     .set({
       responseStatus: data.response_status,
       responseStatusText: data.response_status_text,
+      initialResponseStatus: sql`CASE WHEN ${consoleRequests.initialResponseStatus} = 0 THEN ${data.response_status} ELSE ${consoleRequests.initialResponseStatus} END`,
+      initialResponseStatusText: sql`CASE WHEN ${consoleRequests.initialResponseStatus} = 0 THEN ${data.response_status_text} ELSE ${consoleRequests.initialResponseStatusText} END`,
+      initialCompletedAt: sql`CASE WHEN ${consoleRequests.initialCompletedAt} = 0 THEN ${data.completed_at ?? 0} ELSE ${consoleRequests.initialCompletedAt} END`,
       responseHeadersJson: data.response_headers_json,
       responsePayload: data.response_payload,
       responsePayloadTruncated: data.response_payload_truncated,
@@ -1210,6 +1249,9 @@ function toCamelCaseRow(row: typeof consoleRequests.$inferSelect): ConsoleReques
     response_headers_json: row.responseHeadersJson,
     response_status: row.responseStatus,
     response_status_text: row.responseStatusText,
+    initial_response_status: row.initialResponseStatus,
+    initial_response_status_text: row.initialResponseStatusText,
+    initial_completed_at: row.initialCompletedAt,
     response_payload: row.responsePayload,
     response_payload_truncated: row.responsePayloadTruncated,
     response_payload_truncation_reason: row.responsePayloadTruncationReason,
@@ -1244,6 +1286,11 @@ function normalizeNullableNumber(value: unknown): number | null {
   if (value == null) return null;
   const normalized = Number(value);
   return Number.isFinite(normalized) ? normalized : null;
+}
+
+function normalizeStoredInitialNumber(value: unknown): number | null {
+  const normalized = normalizeNullableNumber(value);
+  return normalized != null && normalized > 0 ? normalized : null;
 }
 
 function roundNullableNumber(value: number | null | undefined): number | null {
@@ -1369,15 +1416,39 @@ function stripMessageRoles(summary: PayloadSummaryForConsole | null): PayloadSum
 function mapListRow(
   row: ConsoleRequestListRow,
   overrides?: Map<string, ModelMetadataOverride>,
+  showRecoveredInitialFailure = false,
 ): ConsoleRequestListItem {
+  const finalStatus = normalizeNullableNumber(row.response_status);
+  const initialStatus = normalizeStoredInitialNumber(row.initial_response_status);
+  const recoveredInitialFailure = showRecoveredInitialFailure
+    && initialStatus != null
+    && initialStatus >= 400
+    && finalStatus != null
+    && finalStatus >= 200
+    && finalStatus < 400;
+  const initialCompletedAt = normalizeStoredInitialNumber(row.initial_completed_at);
+  const createdAt = normalizeNumber(row.created_at);
   const upstreamType = row.upstream_type === 'openai' ? 'openai' : 'anthropic';
   const responseUsage = withCalculatedUsage(row.request_model, toUsage(row), upstreamType, row.route_prefix, overrides, row.cost_pricing_json);
   const sourceRequestType = ((row as any).source_request_type ?? 'unknown') as DetectedRequestKind;
+  const responseTiming = recoveredInitialFailure
+    ? {
+      response_body_bytes: 0,
+      first_chunk_at: initialCompletedAt,
+      first_token_at: null,
+      completed_at: initialCompletedAt,
+      has_streaming_content: false,
+      first_chunk_latency_ms: initialCompletedAt == null ? null : Math.max(0, initialCompletedAt - createdAt),
+      first_token_latency_ms: null,
+      duration_ms: initialCompletedAt == null ? null : Math.max(0, initialCompletedAt - createdAt),
+      generation_duration_ms: null,
+    }
+    : toTiming(row);
 
   return {
     request_id: row.request_id,
-    created_at: normalizeNumber(row.created_at),
-    route_prefix: row.route_prefix,
+    created_at: createdAt,
+    route_prefix: recoveredInitialFailure ? row.original_route_prefix ?? row.route_prefix : row.route_prefix,
     upstream_type: upstreamType,
     source_request_type: sourceRequestType,
     client_label: getRequestClientLabel(row.api_key_name, sourceRequestType),
@@ -1385,12 +1456,15 @@ function mapListRow(
     api_key_name: row.api_key_name ?? null,
     path: row.path,
     target_url: row.target_url,
-    request_model: row.request_model,
-    response_status: normalizeNullableNumber(row.response_status),
-    response_status_text: row.response_status_text ?? '',
+    request_model: recoveredInitialFailure ? row.original_request_model ?? row.request_model : row.request_model,
+    response_status: recoveredInitialFailure ? initialStatus : finalStatus,
+    response_status_text: recoveredInitialFailure ? row.initial_response_status_text ?? '' : row.response_status_text ?? '',
+    initial_response_status: initialStatus,
+    initial_response_status_text: row.initial_response_status_text ?? '',
+    initial_completed_at: initialCompletedAt,
     response_payload_truncated: normalizeNumber(row.response_payload_truncated) > 0,
     response_payload_truncation_reason: row.response_payload_truncation_reason ?? null,
-    response_timing: toTiming(row),
+    response_timing: responseTiming,
     response_usage: responseUsage,
     forwarded_summary: stripMessageRoles(parseJson<PayloadSummaryForConsole>(row.forwarded_summary_json)),
     analysis: buildListAnalysis({
@@ -1435,6 +1509,9 @@ async function mapRow(row: ConsoleRequestRow): Promise<StoredConsoleRequest> {
     response_headers: parseJson<Record<string, string>>(row.response_headers_json),
     response_status: normalizeNullableNumber(row.response_status),
     response_status_text: row.response_status_text ?? '',
+    initial_response_status: normalizeStoredInitialNumber(row.initial_response_status),
+    initial_response_status_text: row.initial_response_status_text ?? '',
+    initial_completed_at: normalizeStoredInitialNumber(row.initial_completed_at),
     response_payload: row.response_payload,
     response_payload_truncated: normalizeNumber(row.response_payload_truncated) > 0,
     response_payload_truncation_reason: row.response_payload_truncation_reason ?? null,
@@ -1617,6 +1694,9 @@ export async function saveConsoleRequest(record: ConsoleRequestSnapshotInput): P
       originalRoutePrefix: record.original_route_prefix ?? null,
       originalRequestModel: record.original_request_model ?? null,
       failoverReason: record.failover_reason ?? null,
+      initialResponseStatus: record.initial_response_status ?? 0,
+      initialResponseStatusText: record.initial_response_status_text ?? '',
+      initialCompletedAt: record.initial_completed_at ?? 0,
       retryAttempt: record.retry_attempt ?? 0,
       sourceRequestType,
     }).onConflictDoUpdate({
@@ -1641,6 +1721,9 @@ export async function saveConsoleRequest(record: ConsoleRequestSnapshotInput): P
         originalRoutePrefix: record.original_route_prefix ?? null,
         originalRequestModel: record.original_request_model ?? null,
         failoverReason: record.failover_reason ?? null,
+        initialResponseStatus: sql`CASE WHEN ${consoleRequests.initialResponseStatus} = 0 THEN ${record.initial_response_status ?? 0} ELSE ${consoleRequests.initialResponseStatus} END`,
+        initialResponseStatusText: sql`CASE WHEN ${consoleRequests.initialResponseStatus} = 0 THEN ${record.initial_response_status_text ?? ''} ELSE ${consoleRequests.initialResponseStatusText} END`,
+        initialCompletedAt: sql`CASE WHEN ${consoleRequests.initialCompletedAt} = 0 THEN ${record.initial_completed_at ?? 0} ELSE ${consoleRequests.initialCompletedAt} END`,
         retryAttempt: record.retry_attempt ?? 0,
         sourceRequestType,
       },
@@ -1681,6 +1764,9 @@ export async function saveConsoleResponse(record: ConsoleResponseSnapshotInput):
         costPricingJson: serializeJson(pricingResult?.pricing ?? null),
         responseStatus: record.response_status,
         responseStatusText: record.response_status_text,
+        initialResponseStatus: sql`CASE WHEN ${consoleRequests.initialResponseStatus} = 0 THEN ${record.response_status} ELSE ${consoleRequests.initialResponseStatus} END`,
+        initialResponseStatusText: sql`CASE WHEN ${consoleRequests.initialResponseStatus} = 0 THEN ${record.response_status_text} ELSE ${consoleRequests.initialResponseStatusText} END`,
+        initialCompletedAt: sql`CASE WHEN ${consoleRequests.initialCompletedAt} = 0 THEN ${timing.completed_at ?? 0} ELSE ${consoleRequests.initialCompletedAt} END`,
         responseHeadersJson: serializeJson(record.response_headers ?? null),
         responsePayload: record.response_payload,
         responsePayloadTruncated: record.response_payload_truncated ? 1 : 0,
@@ -1743,7 +1829,15 @@ export async function listConsoleRequests(
   const orderByColumn = (() => {
     switch (sortBy) {
       case 'response_status':
-        return consoleRequests.responseStatus;
+        return filters?.status === 'error'
+          ? sql`CASE
+            WHEN ${consoleRequests.initialResponseStatus} >= 400
+              AND ${consoleRequests.responseStatus} >= 200
+              AND ${consoleRequests.responseStatus} < 400
+            THEN ${consoleRequests.initialResponseStatus}
+            ELSE ${consoleRequests.responseStatus}
+          END`
+          : consoleRequests.responseStatus;
       case 'tokens':
         return consoleRequests.totalTokens;
       case 'created_at':
@@ -1769,6 +1863,9 @@ export async function listConsoleRequests(
     forwarded_summary_json: consoleRequests.forwardedSummaryJson,
     response_status: consoleRequests.responseStatus,
     response_status_text: consoleRequests.responseStatusText,
+    initial_response_status: consoleRequests.initialResponseStatus,
+    initial_response_status_text: consoleRequests.initialResponseStatusText,
+    initial_completed_at: consoleRequests.initialCompletedAt,
     response_payload_truncated: consoleRequests.responsePayloadTruncated,
     response_payload_truncation_reason: consoleRequests.responsePayloadTruncationReason,
     response_body_bytes: consoleRequests.responseBodyBytes,
@@ -1794,6 +1891,7 @@ export async function listConsoleRequests(
     original_route_prefix: consoleRequests.originalRoutePrefix,
     original_request_model: consoleRequests.originalRequestModel,
     failover_reason: consoleRequests.failoverReason,
+    retry_attempt: consoleRequests.retryAttempt,
   })
     .from(consoleRequests)
     .where(buildRequestWhere(filters))
@@ -1815,7 +1913,7 @@ export async function listConsoleRequests(
   ]);
 
   return {
-    requests: rows.map((row) => mapListRow(row, overrides)),
+    requests: rows.map((row) => mapListRow(row, overrides, filters?.status === 'error')),
     total,
   };
 }
@@ -1922,25 +2020,50 @@ export async function getProviderRecentHttpStatuses(limit = 3): Promise<Provider
   const normalizedLimit = Number.isFinite(limit)
     ? Math.min(10, Math.max(1, Math.trunc(limit)))
     : 3;
+  const providerRoute = sql<string>`CASE
+    WHEN ${consoleRequests.initialResponseStatus} > 0
+      AND ${consoleRequests.originalRoutePrefix} IS NOT NULL
+    THEN ${consoleRequests.originalRoutePrefix}
+    ELSE ${consoleRequests.routePrefix}
+  END`;
+  const providerModel = sql<string>`CASE
+    WHEN ${consoleRequests.initialResponseStatus} > 0
+      AND ${consoleRequests.originalRequestModel} IS NOT NULL
+    THEN ${consoleRequests.originalRequestModel}
+    ELSE ${consoleRequests.requestModel}
+  END`;
+  const providerStatus = sql<number>`CASE
+    WHEN ${consoleRequests.initialResponseStatus} > 0
+    THEN ${consoleRequests.initialResponseStatus}
+    ELSE ${consoleRequests.responseStatus}
+  END`;
+  const providerCompletedAt = sql<number | null>`CASE
+    WHEN ${consoleRequests.initialResponseStatus} > 0
+    THEN NULLIF(${consoleRequests.initialCompletedAt}, 0)
+    ELSE ${consoleRequests.completedAt}
+  END`;
   const channelRank = sql<number>`row_number() over (
-    partition by ${consoleRequests.routePrefix}
+    partition by ${providerRoute}
     order by ${consoleRequests.createdAt} desc
   )`.as('channel_rank');
   const modelRank = sql<number>`row_number() over (
-    partition by ${consoleRequests.routePrefix}, ${consoleRequests.requestModel}
+    partition by ${providerRoute}, ${providerModel}
     order by ${consoleRequests.createdAt} desc
   )`.as('model_rank');
   const rankedRequests = db.select({
-    routePrefix: consoleRequests.routePrefix,
-    requestModel: consoleRequests.requestModel,
-    responseStatus: consoleRequests.responseStatus,
+    routePrefix: providerRoute.as('provider_route_prefix'),
+    requestModel: providerModel.as('provider_request_model'),
+    responseStatus: providerStatus.as('provider_response_status'),
     createdAt: consoleRequests.createdAt,
-    completedAt: consoleRequests.completedAt,
+    completedAt: providerCompletedAt.as('provider_completed_at'),
     channelRank,
     modelRank,
   })
     .from(consoleRequests)
-    .where(and(isNotNull(consoleRequests.responseStatus), excludeConnectivityTests()))
+    .where(and(
+      or(sql`${consoleRequests.initialResponseStatus} > 0`, isNotNull(consoleRequests.responseStatus)),
+      excludeConnectivityTests(),
+    ))
     .as('ranked_provider_http_statuses');
 
   const rows = await db.select().from(rankedRequests)
@@ -1999,17 +2122,21 @@ export interface ConsoleFilterOptions {
 export async function getConsoleFilterOptions(): Promise<ConsoleFilterOptions> {
   await consoleStoreReady;
 
-  // 查询所有不同的 route_prefix
+  // 同时返回最终路由与首次失败路由，确保“错误”筛选可选到已被 fallback 恢复的原渠道。
   const routeRows = await db
-    .selectDistinct({ route: consoleRequests.routePrefix })
-    .from(consoleRequests)
-    .orderBy(consoleRequests.routePrefix);
+    .selectDistinct({
+      route: consoleRequests.routePrefix,
+      originalRoute: consoleRequests.originalRoutePrefix,
+    })
+    .from(consoleRequests);
 
-  // 查询所有不同的 request_model (使用 model bucket)
+  // 查询最终模型与首次失败模型（最终模型仍使用 model bucket）。
   const modelRows = await db
-    .selectDistinct({ model: getModelBucketExpression() })
-    .from(consoleRequests)
-    .orderBy(getModelBucketExpression());
+    .selectDistinct({
+      model: getModelBucketExpression(),
+      originalModel: consoleRequests.originalRequestModel,
+    })
+    .from(consoleRequests);
 
   // 查询所有不同的 api_key_name（已使用 API Key 的请求）
   const keyNameRows = await db
@@ -2037,8 +2164,12 @@ export async function getConsoleFilterOptions(): Promise<ConsoleFilterOptions> {
   }
 
   return {
-    routes: routeRows.map(row => row.route).filter(Boolean),
-    models: modelRows.map(row => row.model).filter(Boolean),
+    routes: Array.from(new Set(
+      routeRows.flatMap(row => [row.route, row.originalRoute]).filter((value): value is string => Boolean(value)),
+    )).sort(),
+    models: Array.from(new Set(
+      modelRows.flatMap(row => [row.model, row.originalModel]).filter((value): value is string => Boolean(value)),
+    )).sort(),
     clients,
   };
 }

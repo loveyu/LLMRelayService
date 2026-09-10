@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createDbClient } from '../src/db/client';
 import { consoleRequests } from '../src/db/schema';
-import { clearConsoleRequests, getProviderRecentHttpStatuses } from '../src/console-store';
+import { clearConsoleRequests, getProviderRecentHttpStatuses, listConsoleRequests } from '../src/console-store';
 
 const db = createDbClient();
 
@@ -69,5 +69,48 @@ describe('getProviderRecentHttpStatuses', () => {
     expect(result.models.get('beta')?.get('model-a')).toEqual([
       { statusCode: 429, createdAt: 700, durationMs: 70 },
     ]);
+  });
+
+  it('uses the initial provider failure and exposes it only in the error-filtered log list', async () => {
+    await db.insert(consoleRequests).values({
+      ...requestRow('recovered-429', 'fallback-channel', 'fallback-model', 200, 100, 80),
+      responseStatusText: 'OK',
+      originalRoutePrefix: 'primary-channel',
+      originalRequestModel: 'primary-model',
+      failoverFrom: 'primary-channel (primary-model)',
+      failoverReason: 'HTTP 429',
+      initialResponseStatus: 429,
+      initialResponseStatusText: 'Too Many Requests',
+      initialCompletedAt: 125,
+    });
+
+    const statuses = await getProviderRecentHttpStatuses();
+    expect(statuses.channels.get('primary-channel')).toEqual([
+      { statusCode: 429, createdAt: 100, durationMs: 25 },
+    ]);
+    expect(statuses.models.get('primary-channel')?.get('primary-model')).toEqual([
+      { statusCode: 429, createdAt: 100, durationMs: 25 },
+    ]);
+    expect(statuses.channels.has('fallback-channel')).toBe(false);
+
+    const defaultLogs = await listConsoleRequests();
+    expect(defaultLogs.requests[0]).toMatchObject({
+      route_prefix: 'fallback-channel',
+      request_model: 'fallback-model',
+      response_status: 200,
+    });
+
+    const errorLogs = await listConsoleRequests(50, 0, { status: 'error' });
+    expect(errorLogs.requests[0]).toMatchObject({
+      route_prefix: 'primary-channel',
+      request_model: 'primary-model',
+      response_status: 429,
+      response_status_text: 'Too Many Requests',
+      response_timing: { duration_ms: 25 },
+    });
+
+    expect((await listConsoleRequests(50, 0, { status: 'error', route: 'primary-channel' })).total).toBe(1);
+    expect((await listConsoleRequests(50, 0, { status: 'error', route: 'fallback-channel' })).total).toBe(0);
+    expect((await listConsoleRequests(50, 0, { status: 'error', model: 'primary-model' })).total).toBe(1);
   });
 });

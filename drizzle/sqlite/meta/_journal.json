@@ -15,6 +15,13 @@
       "when": 1785166858266,
       "tag": "0001_steady_whiplash",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789031538584,
+      "tag": "0002_hesitant_spyke",
+      "breakpoints": true
     }
   ]
 }

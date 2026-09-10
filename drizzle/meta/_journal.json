@@ -85,6 +85,13 @@
       "when": 1785166851896,
       "tag": "0011_gray_black_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789031532363,
+      "tag": "0012_complete_gambit",
+      "breakpoints": true
     }
   ]
 }

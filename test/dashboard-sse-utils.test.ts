@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
-import { extractReadableSseText } from "../console/ai-proxy-dashboard/src/features/dashboard/utils"
+import { extractReadableSseSegments } from "../console/ai-proxy-dashboard/src/features/dashboard/utils"
 
-describe("extractReadableSseText", () => {
+describe("extractReadableSseSegments", () => {
   it("extracts readable text from anthropic SSE payloads", () => {
     const ssePayload = `event: message_start
 data: {"message":{"content":[],"model":"claude-opus-4-6"},"type":"message_start"}
@@ -18,7 +18,7 @@ data: {"delta":{"text":"，世界","type":"text_delta"},"index":0,"type":"conten
 event: message_stop
 data: {"type":"message_stop"}`
 
-    expect(extractReadableSseText(ssePayload)).toBe("你好，世界")
+    expect(extractReadableSseSegments(ssePayload).content).toBe("你好，世界")
   })
 
   it("extracts readable text from openai SSE payloads", () => {
@@ -28,7 +28,7 @@ data: {"id":"chatcmpl-1","choices":[{"delta":{"content":" world"},"index":0}]}
 
 data: [DONE]`
 
-    expect(extractReadableSseText(ssePayload)).toBe("Hello world")
+    expect(extractReadableSseSegments(ssePayload).content).toBe("Hello world")
   })
 
   it("ignores malformed SSE chunks", () => {
@@ -37,6 +37,6 @@ data: {invalid-json}
 
 data: [DONE]`
 
-    expect(extractReadableSseText(ssePayload)).toBe("")
+    expect(extractReadableSseSegments(ssePayload)).toEqual({ reasoning: "", content: "" })
   })
 })

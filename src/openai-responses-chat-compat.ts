@@ -596,7 +596,7 @@ interface ThinkTagParserState {
 function pushThinkTextSegment(segments: ThinkTextSegment[], kind: ThinkTextSegmentKind, text: string): void {
   if (!text) return;
 
-  const previous = segments.at(-1);
+  const previous = segments[segments.length - 1];
   if (previous?.kind === kind) {
     previous.text += text;
     return;

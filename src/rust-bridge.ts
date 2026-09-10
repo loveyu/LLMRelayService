@@ -110,6 +110,9 @@ interface RustRequestLog {
   failoverFrom?: string | null;
   failoverChain?: string[];
   failoverReason?: string | null;
+  initialResponseStatus?: number | null;
+  initialResponseStatusText?: string | null;
+  initialCompletedAt?: number | null;
   originalRoutePrefix?: string | null;
   originalRequestModel?: string | null;
   retryAttempt?: number;

@@ -487,6 +487,9 @@ async function handleProxyRequest(c: any): Promise<Response> {
   const failedRouteChain: string[] = [];
   let failoverReason: string | null = null;
   let lastFailureTrigger: FailoverTrigger | null = null;
+  let initialResponseStatus: number | null = null;
+  let initialResponseStatusText: string | null = null;
+  let initialCompletedAt: number | null = null;
   let sourceRequestType = 'unknown';
 
   const routeKey = (route: RouteResult): string => `${route.channelName}:${route.resolvedModel ?? requestedModel}:${route.targetUrl}`;
@@ -570,9 +573,14 @@ async function handleProxyRequest(c: any): Promise<Response> {
       forward_headers: attempt.headersSummary,
       failover_from: attempt.failoverFrom,
       failover_chain: attempt.failoverChain,
-      original_route_prefix: attempt.failoverFrom,
-      original_request_model: attempt.failoverFrom ? originalRequestModel : null,
+      original_route_prefix: attempt.failoverFrom ? initialRoute.channelName : null,
+      original_request_model: attempt.failoverFrom
+        ? initialRoute.resolvedModel ?? originalRequestModel
+        : null,
       failover_reason: attempt.failoverReason,
+      initial_response_status: initialResponseStatus,
+      initial_response_status_text: initialResponseStatusText,
+      initial_completed_at: initialCompletedAt,
       retry_attempt: attempt.retryAttempt,
       source_request_type: sourceRequestType as any,
     }));
@@ -841,6 +849,11 @@ async function handleProxyRequest(c: any): Promise<Response> {
     } catch (err: any) {
       addPerfPhase(requestPerfPhases, 'proxy_ms', elapsedPerfMs(proxyStart));
       const isTimeoutError = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+      if (initialResponseStatus == null) {
+        initialResponseStatus = isTimeoutError ? 504 : 502;
+        initialResponseStatusText = isTimeoutError ? 'Gateway Timeout' : 'Bad Gateway';
+        initialCompletedAt = Date.now();
+      }
       const trigger: FailoverTrigger = isTimeoutError ? { kind: 'timeout' } : { kind: 'network_error' };
       lastFailureTrigger = trigger;
       if (shouldContinueAfterFailure(failoverPolicy, trigger, retryIndexForRoute)) {
@@ -911,6 +924,11 @@ async function handleProxyRequest(c: any): Promise<Response> {
 
     // 即使是流式请求，错误状态码也是在开流前返回的（响应体尚未转发给客户端，下面会 cancel 掉），
     // 此时重试/回退是安全的；只有已经开始流式响应体后才不应重试，而那种情况状态码是 2xx，不会命中 failover。
+    if (initialResponseStatus == null) {
+      initialResponseStatus = upstreamResponse.status;
+      initialResponseStatusText = upstreamResponse.statusText;
+      initialCompletedAt = Date.now();
+    }
     const statusTrigger: FailoverTrigger = { kind: 'status', status: upstreamResponse.status };
     if (shouldContinueAfterFailure(failoverPolicy, statusTrigger, retryIndexForRoute)) {
       lastFailureTrigger = statusTrigger;

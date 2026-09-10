@@ -177,6 +177,9 @@ pub async fn proxy_handler(
     // request log can show the failover trajectory (matches TS `index.ts` semantics).
     let mut failed_route_chain: Vec<String> = Vec::new();
     let mut failover_reason: Option<String> = None;
+    let mut initial_response_status: Option<u16> = None;
+    let mut initial_response_status_text: Option<String> = None;
+    let mut initial_completed_at: Option<u64> = None;
 
     loop {
         if attempt_index >= active_routes.len() {
@@ -288,6 +291,14 @@ pub async fn proxy_handler(
         // a fallback route (attempt_index > 0) records the initial route as failover_from.
         let is_fallback = attempt_index > 0;
         let failover_from = if is_fallback { Some(describe_route(&initial_route)) } else { None };
+        let original_route_prefix =
+            if is_fallback { Some(initial_route.channel_name.clone()) } else { None };
+        let original_request_model = if is_fallback {
+            Some(initial_route.resolved_model.clone().unwrap_or_else(|| model.clone()))
+        } else {
+            None
+        };
+        let request_model_for_log = route.resolved_model.as_deref().unwrap_or(&model);
 
         // Fire-and-forget: send request log to TS via IPC
         send_request_log(
@@ -298,7 +309,7 @@ pub async fn proxy_handler(
             &uri,
             pathname,
             &route,
-            &model,
+            request_model_for_log,
             &headers,
             &fwd_headers,
             &request_body,
@@ -308,14 +319,26 @@ pub async fn proxy_handler(
             failover_from.clone(),
             failed_route_chain.clone(),
             failover_reason.clone(),
-            failover_from.clone(),
-            if is_fallback { Some(model.clone()) } else { None },
+            initial_response_status,
+            initial_response_status_text.clone(),
+            initial_completed_at,
+            original_route_prefix,
+            original_request_model,
             retry_count,
         );
 
         match upstream_result {
             Ok(Ok(upstream_resp)) => {
                 let status = upstream_resp.status().as_u16();
+                if initial_response_status.is_none() {
+                    initial_response_status = Some(status);
+                    initial_response_status_text =
+                        upstream_resp.status().canonical_reason().map(ToString::to_string);
+                    initial_completed_at = Some(
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+                            as u64,
+                    );
+                }
                 if (200..400).contains(&status) {
                     let is_sse_val = upstream_resp
                         .headers()
@@ -515,6 +538,16 @@ pub async fn proxy_handler(
             }
             Ok(Err(e)) => {
                 let is_timeout = e.is_timeout();
+                if initial_response_status.is_none() {
+                    initial_response_status = Some(if is_timeout { 504 } else { 502 });
+                    initial_response_status_text = Some(
+                        if is_timeout { "Gateway Timeout" } else { "Bad Gateway" }.to_string(),
+                    );
+                    initial_completed_at = Some(
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+                            as u64,
+                    );
+                }
                 let trigger = if is_timeout {
                     FailoverTrigger::Timeout
                 } else {
@@ -572,6 +605,14 @@ pub async fn proxy_handler(
             }
             Err(_) => {
                 // Timeout on first byte
+                if initial_response_status.is_none() {
+                    initial_response_status = Some(504);
+                    initial_response_status_text = Some("Gateway Timeout".to_string());
+                    initial_completed_at = Some(
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+                            as u64,
+                    );
+                }
                 let trigger = FailoverTrigger::Timeout;
                 {
                     let label = describe_route(&route);
@@ -1122,11 +1163,13 @@ fn send_request_log(
     failover_from: Option<String>,
     failover_chain: Vec<String>,
     failover_reason: Option<String>,
+    initial_response_status: Option<u16>,
+    initial_response_status_text: Option<String>,
+    initial_completed_at: Option<u64>,
     original_route_prefix: Option<String>,
     original_request_model: Option<String>,
     retry_attempt: u32,
 ) {
-    let ipc = state.ipc.clone();
     let rid = request_id.to_string();
     let m = method.to_string();
     let p = pathname.to_string();
@@ -1160,31 +1203,34 @@ fn send_request_log(
         Some(String::from_utf8_lossy(original_body).to_string())
     };
 
-    tokio::spawn(async move {
-        ipc.send(RustToTsMessage::RequestLog {
-            request_id: rid,
-            created_at,
-            method: m,
-            route_prefix: rp,
-            upstream_type: ut,
-            path: p,
-            url: fu,
-            target_url: tu,
-            request_model: rm,
-            original_payload: op,
-            forwarded_payload: fp,
-            original_headers: oh,
-            forward_headers: fh,
-            api_key_id,
-            api_key_name,
-            source_request_type: "chat_completion".to_string(),
-            failover_from,
-            failover_chain,
-            failover_reason,
-            original_route_prefix,
-            original_request_model,
-            retry_attempt,
-        });
+    // `send` 仅写入无界 mpsc 队列，不会阻塞请求；同步入队可保证多次 retry/fallback
+    // 的 request_log 顺序稳定，避免旧 attempt 覆盖新 attempt 的路由与首次状态。
+    state.ipc.send(RustToTsMessage::RequestLog {
+        request_id: rid,
+        created_at,
+        method: m,
+        route_prefix: rp,
+        upstream_type: ut,
+        path: p,
+        url: fu,
+        target_url: tu,
+        request_model: rm,
+        original_payload: op,
+        forwarded_payload: fp,
+        original_headers: oh,
+        forward_headers: fh,
+        api_key_id,
+        api_key_name,
+        source_request_type: "chat_completion".to_string(),
+        failover_from,
+        failover_chain,
+        failover_reason,
+        initial_response_status,
+        initial_response_status_text,
+        initial_completed_at,
+        original_route_prefix,
+        original_request_model,
+        retry_attempt,
     });
 }
 

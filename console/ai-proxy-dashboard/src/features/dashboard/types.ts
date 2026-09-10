@@ -114,6 +114,9 @@ export type ConsoleRequestListItem = {
   request_model: string
   response_status: number | null
   response_status_text: string
+  initial_response_status?: number | null
+  initial_response_status_text?: string
+  initial_completed_at?: number | null
   response_payload_truncated: boolean
   response_payload_truncation_reason: string | null
   response_timing: ConsoleResponseTiming

@@ -69,6 +69,13 @@ pub enum RustToTsMessage {
         failover_chain: Vec<String>,
         #[serde(rename = "failoverReason", default)]
         failover_reason: Option<String>,
+        /// 首次上游尝试的结果。默认 None，兼容旧 TS 日志接收端与连通性测试消息。
+        #[serde(rename = "initialResponseStatus", default)]
+        initial_response_status: Option<u16>,
+        #[serde(rename = "initialResponseStatusText", default)]
+        initial_response_status_text: Option<String>,
+        #[serde(rename = "initialCompletedAt", default)]
+        initial_completed_at: Option<u64>,
         #[serde(rename = "originalRoutePrefix", default)]
         original_route_prefix: Option<String>,
         #[serde(rename = "originalRequestModel", default)]
