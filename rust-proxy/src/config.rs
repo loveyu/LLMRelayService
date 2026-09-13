@@ -185,11 +185,22 @@ pub struct GatewayFailoverPolicy {
     pub retry_on_status_codes: Vec<u16>,
     #[serde(rename = "retryOnStatusRanges")]
     pub retry_on_status_ranges: Vec<FailoverStatusRange>,
+    #[serde(default = "default_true", rename = "circuitBreakerEnabled")]
+    pub circuit_breaker_enabled: bool,
+    #[serde(
+        default = "default_circuit_breaker_failure_threshold",
+        rename = "circuitBreakerFailureThreshold"
+    )]
+    pub circuit_breaker_failure_threshold: u32,
+    #[serde(default = "default_circuit_breaker_cooldown_ms", rename = "circuitBreakerCooldownMs")]
+    pub circuit_breaker_cooldown_ms: u64,
 }
 
 /// Matches TS `GatewayTimeoutSettings`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayTimeoutSettings {
+    #[serde(default = "default_connect_timeout_ms", rename = "connectTimeoutMs")]
+    pub connect_timeout_ms: u64,
     #[serde(rename = "defaultFirstByteTimeoutMs")]
     pub default_first_byte_timeout_ms: u64,
     #[serde(rename = "streamFirstByteTimeoutMs")]
@@ -296,9 +307,41 @@ mod tests {
 
         assert_eq!(entry.effective_responses_mode(), None);
     }
+
+    #[test]
+    fn old_config_snapshots_receive_connect_timeout_and_circuit_breaker_defaults() {
+        let payload: SyncConfigPayload = serde_json::from_value(serde_json::json!({
+            "providers": {},
+            "aliases": {},
+            "api_keys": [],
+            "timeouts": {
+                "defaultFirstByteTimeoutMs": 300000,
+                "streamFirstByteTimeoutMs": 300000,
+                "imageFirstByteTimeoutMs": 300000,
+                "responseIdleTimeoutMs": 300000
+            },
+            "failover": {
+                "enabled": true,
+                "retryAttempts": 1,
+                "modelFallbackMode": "same_model",
+                "maxFallbackAttempts": 2,
+                "customModelFallbacks": [],
+                "retryOnTimeout": true,
+                "retryOnNetworkError": true,
+                "retryOnStatusCodes": [408, 429],
+                "retryOnStatusRanges": ["5xx"]
+            }
+        }))
+        .expect("old snapshot remains compatible");
+
+        assert_eq!(payload.timeouts.connect_timeout_ms, 3_000);
+        assert!(payload.failover.circuit_breaker_enabled);
+        assert_eq!(payload.failover.circuit_breaker_failure_threshold, 2);
+        assert_eq!(payload.failover.circuit_breaker_cooldown_ms, 30_000);
+    }
 }
 
-fn default_failover() -> GatewayFailoverPolicy {
+pub(crate) fn default_failover() -> GatewayFailoverPolicy {
     GatewayFailoverPolicy {
         enabled: true,
         retry_attempts: 1,
@@ -309,11 +352,27 @@ fn default_failover() -> GatewayFailoverPolicy {
         retry_on_network_error: true,
         retry_on_status_codes: vec![408, 429],
         retry_on_status_ranges: vec![FailoverStatusRange::S5xx],
+        circuit_breaker_enabled: true,
+        circuit_breaker_failure_threshold: default_circuit_breaker_failure_threshold(),
+        circuit_breaker_cooldown_ms: default_circuit_breaker_cooldown_ms(),
     }
+}
+
+fn default_circuit_breaker_failure_threshold() -> u32 {
+    2
+}
+
+fn default_circuit_breaker_cooldown_ms() -> u64 {
+    30_000
+}
+
+fn default_connect_timeout_ms() -> u64 {
+    3_000
 }
 
 fn default_timeouts() -> GatewayTimeoutSettings {
     GatewayTimeoutSettings {
+        connect_timeout_ms: default_connect_timeout_ms(),
         default_first_byte_timeout_ms: 300_000,
         stream_first_byte_timeout_ms: 300_000,
         image_first_byte_timeout_ms: 300_000,

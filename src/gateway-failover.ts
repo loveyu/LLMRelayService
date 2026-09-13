@@ -20,6 +20,9 @@ export interface GatewayFailoverPolicy {
   retryOnNetworkError: boolean;
   retryOnStatusCodes: number[];
   retryOnStatusRanges: FailoverStatusRange[];
+  circuitBreakerEnabled: boolean;
+  circuitBreakerFailureThreshold: number;
+  circuitBreakerCooldownMs: number;
 }
 
 export interface GatewayFailoverPolicyLimits {
@@ -27,6 +30,8 @@ export interface GatewayFailoverPolicyLimits {
   maxFallbackAttempts: { min: number; max: number };
   customModelFallbackRules: { min: number; max: number };
   customModelFallbacksPerRule: { min: number; max: number };
+  circuitBreakerFailureThreshold: { min: number; max: number };
+  circuitBreakerCooldownMs: { min: number; max: number };
 }
 
 export type GatewayFailoverPolicyView = GatewayFailoverPolicy & {
@@ -56,6 +61,9 @@ export const CODE_DEFAULT_GATEWAY_FAILOVER_POLICY: GatewayFailoverPolicy = {
   retryOnNetworkError: true,
   retryOnStatusCodes: [408, 429],
   retryOnStatusRanges: ['5xx'],
+  circuitBreakerEnabled: true,
+  circuitBreakerFailureThreshold: 2,
+  circuitBreakerCooldownMs: 30_000,
 };
 
 export const GATEWAY_FAILOVER_POLICY_LIMITS: GatewayFailoverPolicyLimits = {
@@ -63,6 +71,8 @@ export const GATEWAY_FAILOVER_POLICY_LIMITS: GatewayFailoverPolicyLimits = {
   maxFallbackAttempts: { min: 0, max: 20 },
   customModelFallbackRules: { min: 0, max: 100 },
   customModelFallbacksPerRule: { min: 1, max: 50 },
+  circuitBreakerFailureThreshold: { min: 1, max: 20 },
+  circuitBreakerCooldownMs: { min: 1_000, max: 3_600_000 },
 };
 
 let db: DbClient | null = null;
@@ -82,7 +92,13 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
 function normalizeIntegerInRange(
   value: unknown,
   fallback: number,
-  fieldName: keyof Pick<GatewayFailoverPolicy, 'retryAttempts' | 'maxFallbackAttempts'>,
+  fieldName: keyof Pick<
+    GatewayFailoverPolicy,
+    | 'retryAttempts'
+    | 'maxFallbackAttempts'
+    | 'circuitBreakerFailureThreshold'
+    | 'circuitBreakerCooldownMs'
+  >,
 ): number {
   if (value == null || value === '') return fallback;
   const parsed = Number(value);
@@ -201,6 +217,20 @@ export function normalizeGatewayFailoverPolicy(
     retryOnNetworkError: readBoolean(input.retryOnNetworkError, defaults.retryOnNetworkError),
     retryOnStatusCodes: normalizeStatusCodes(input.retryOnStatusCodes, defaults.retryOnStatusCodes),
     retryOnStatusRanges: normalizeStatusRanges(input.retryOnStatusRanges, defaults.retryOnStatusRanges),
+    circuitBreakerEnabled: readBoolean(
+      input.circuitBreakerEnabled,
+      defaults.circuitBreakerEnabled,
+    ),
+    circuitBreakerFailureThreshold: normalizeIntegerInRange(
+      input.circuitBreakerFailureThreshold,
+      defaults.circuitBreakerFailureThreshold,
+      'circuitBreakerFailureThreshold',
+    ),
+    circuitBreakerCooldownMs: normalizeIntegerInRange(
+      input.circuitBreakerCooldownMs,
+      defaults.circuitBreakerCooldownMs,
+      'circuitBreakerCooldownMs',
+    ),
   };
 }
 
@@ -226,6 +256,18 @@ function parseStoredPolicy(valueJson: string): GatewayFailoverPolicyInput {
     retryOnNetworkError: typeof parsed.retryOnNetworkError === 'boolean' ? parsed.retryOnNetworkError : undefined,
     retryOnStatusCodes: Array.isArray(parsed.retryOnStatusCodes) ? parsed.retryOnStatusCodes as number[] : undefined,
     retryOnStatusRanges: Array.isArray(parsed.retryOnStatusRanges) ? parsed.retryOnStatusRanges as FailoverStatusRange[] : undefined,
+    circuitBreakerEnabled:
+      typeof parsed.circuitBreakerEnabled === 'boolean'
+        ? parsed.circuitBreakerEnabled
+        : undefined,
+    circuitBreakerFailureThreshold:
+      typeof parsed.circuitBreakerFailureThreshold === 'number'
+        ? parsed.circuitBreakerFailureThreshold
+        : undefined,
+    circuitBreakerCooldownMs:
+      typeof parsed.circuitBreakerCooldownMs === 'number'
+        ? parsed.circuitBreakerCooldownMs
+        : undefined,
   };
 }
 

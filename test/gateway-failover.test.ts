@@ -48,6 +48,8 @@ describe('gateway failover policy', () => {
     expect(() => normalizeGatewayFailoverPolicy({ retryOnStatusCodes: [399] })).toThrow('retryOnStatusCodes');
     expect(() => normalizeGatewayFailoverPolicy({ retryOnStatusRanges: ['4xx' as any] })).toThrow('retryOnStatusRanges');
     expect(() => normalizeGatewayFailoverPolicy({ customModelFallbacks: [{ model: 'gpt-4o', fallbacks: [] }] })).toThrow('customModelFallbacks');
+    expect(() => normalizeGatewayFailoverPolicy({ circuitBreakerFailureThreshold: 0 })).toThrow('circuitBreakerFailureThreshold');
+    expect(() => normalizeGatewayFailoverPolicy({ circuitBreakerCooldownMs: 999 })).toThrow('circuitBreakerCooldownMs');
   });
 
   it('matches timeout, network, explicit status, and 5xx triggers', () => {

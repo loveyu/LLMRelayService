@@ -3,6 +3,7 @@ import { createDbClient, type DbClient } from './db/client';
 import { gatewaySettings } from './db/schema';
 
 export interface GatewayTimeoutSettings {
+  connectTimeoutMs: number;
   defaultFirstByteTimeoutMs: number;
   streamFirstByteTimeoutMs: number;
   imageFirstByteTimeoutMs: number;
@@ -18,6 +19,7 @@ export interface TimeoutLimit {
 export type GatewayTimeoutSettingsView = GatewayTimeoutSettings & {
   defaults: GatewayTimeoutSettings;
   limits: {
+    connect: TimeoutLimit;
     firstByte: TimeoutLimit;
     responseIdle: TimeoutLimit;
   };
@@ -31,6 +33,7 @@ const SETTINGS_CACHE_TTL_MS = 5_000;
 const SETTINGS_WARNING_INTERVAL_MS = 60_000;
 
 export const CODE_DEFAULT_GATEWAY_TIMEOUTS: GatewayTimeoutSettings = {
+  connectTimeoutMs: 3_000,
   defaultFirstByteTimeoutMs: 300_000,
   streamFirstByteTimeoutMs: 300_000,
   imageFirstByteTimeoutMs: 300_000,
@@ -38,6 +41,10 @@ export const CODE_DEFAULT_GATEWAY_TIMEOUTS: GatewayTimeoutSettings = {
 };
 
 export const GATEWAY_TIMEOUT_LIMITS = {
+  connect: {
+    minMs: 100,
+    maxMs: 60_000,
+  },
   firstByte: {
     minMs: 1_000,
     maxMs: 900_000,
@@ -77,6 +84,9 @@ function readNonNegativeIntegerEnv(name: string): number | undefined {
 
 export function getGatewayTimeoutDefaults(): GatewayTimeoutSettings {
   return {
+    connectTimeoutMs:
+      readPositiveIntegerEnv('UPSTREAM_CONNECT_TIMEOUT_MS')
+      ?? CODE_DEFAULT_GATEWAY_TIMEOUTS.connectTimeoutMs,
     defaultFirstByteTimeoutMs:
       readPositiveIntegerEnv('UPSTREAM_DEFAULT_FIRST_BYTE_TIMEOUT_MS')
       ?? readPositiveIntegerEnv('UPSTREAM_REQUEST_TIMEOUT_MS')
@@ -116,6 +126,11 @@ export function normalizeGatewayTimeoutSettings(
   defaults = getGatewayTimeoutDefaults(),
 ): GatewayTimeoutSettings {
   return {
+    connectTimeoutMs: assertTimeoutInRange(
+      input.connectTimeoutMs ?? defaults.connectTimeoutMs,
+      'connectTimeoutMs',
+      GATEWAY_TIMEOUT_LIMITS.connect,
+    ),
     defaultFirstByteTimeoutMs: assertTimeoutInRange(
       input.defaultFirstByteTimeoutMs ?? defaults.defaultFirstByteTimeoutMs,
       'defaultFirstByteTimeoutMs',
@@ -157,6 +172,10 @@ function parseStoredSettings(valueJson: string): GatewayTimeoutSettingsInput {
 
   const parsed = JSON.parse(valueJson) as Record<string, unknown>;
   return {
+    connectTimeoutMs:
+      typeof parsed.connectTimeoutMs === 'number'
+        ? parsed.connectTimeoutMs
+        : undefined,
     defaultFirstByteTimeoutMs:
       typeof parsed.defaultFirstByteTimeoutMs === 'number'
         ? parsed.defaultFirstByteTimeoutMs

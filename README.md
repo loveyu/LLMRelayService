@@ -263,6 +263,7 @@ Railway / Render 等平台部署时构建命令同上。
 | `RUST_PROXY_BIN` | — | Rust 二进制路径，默认自动检测 |
 | `RUST_LOG` | — | Rust 日志级别，默认 `rust_proxy=info` |
 | `LRS_IPC_SOCKET` | — | IPC socket 路径，默认 `/tmp/lrs-ipc.sock` |
+| `UPSTREAM_CONNECT_TIMEOUT_MS` | — | 建立上游 TCP 连接的默认超时时间，默认 `3000` 毫秒；与首字节超时独立，可在控制台配置页持久化覆盖 |
 | `UPSTREAM_DEFAULT_FIRST_BYTE_TIMEOUT_MS` | — | 普通请求等待上游响应头的默认超时时间，默认 `300000` 毫秒；可在控制台配置页持久化覆盖 |
 | `UPSTREAM_STREAM_FIRST_BYTE_TIMEOUT_MS` | — | 流式请求等待上游响应头的默认超时时间，默认 `300000` 毫秒；可在控制台配置页持久化覆盖 |
 | `UPSTREAM_IMAGE_FIRST_BYTE_TIMEOUT_MS` | — | 图片端点等待上游响应头的默认超时时间，默认 `300000` 毫秒；可在控制台配置页持久化覆盖 |

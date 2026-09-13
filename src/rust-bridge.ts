@@ -69,9 +69,13 @@ interface GatewayFailoverPolicy {
   retryOnNetworkError: boolean;
   retryOnStatusCodes: number[];
   retryOnStatusRanges: ('5xx')[];
+  circuitBreakerEnabled: boolean;
+  circuitBreakerFailureThreshold: number;
+  circuitBreakerCooldownMs: number;
 }
 
 interface GatewayTimeoutSettings {
+  connectTimeoutMs: number;
   defaultFirstByteTimeoutMs: number;
   streamFirstByteTimeoutMs: number;
   imageFirstByteTimeoutMs: number;
@@ -410,8 +414,12 @@ async function buildSyncConfigPayload(): Promise<SyncConfigPayload> {
       retryOnNetworkError: failoverView.retryOnNetworkError,
       retryOnStatusCodes: failoverView.retryOnStatusCodes,
       retryOnStatusRanges: failoverView.retryOnStatusRanges,
+      circuitBreakerEnabled: failoverView.circuitBreakerEnabled,
+      circuitBreakerFailureThreshold: failoverView.circuitBreakerFailureThreshold,
+      circuitBreakerCooldownMs: failoverView.circuitBreakerCooldownMs,
     },
     timeouts: {
+      connectTimeoutMs: timeoutsView.connectTimeoutMs,
       defaultFirstByteTimeoutMs: timeoutsView.defaultFirstByteTimeoutMs,
       streamFirstByteTimeoutMs: timeoutsView.streamFirstByteTimeoutMs,
       imageFirstByteTimeoutMs: timeoutsView.imageFirstByteTimeoutMs,

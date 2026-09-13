@@ -1,3 +1,4 @@
+use crate::circuit_breaker::CircuitBreaker;
 use crate::config::{
     AliasTarget, ApiKeyInfo, ConfigEntry, GatewayFailoverPolicy, GatewayTimeoutSettings,
 };
@@ -5,6 +6,22 @@ use crate::ipc::IpcSender;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
+
+const UPSTREAM_TOTAL_TIMEOUT_SECS: u64 = 600;
+
+#[derive(Clone)]
+struct UpstreamHttpClient {
+    client: reqwest::Client,
+    connect_timeout_ms: u64,
+}
+
+fn build_http_client(connect_timeout_ms: u64) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_millis(connect_timeout_ms))
+        .timeout(std::time::Duration::from_secs(UPSTREAM_TOTAL_TIMEOUT_SECS))
+        .build()
+        .expect("Failed to create HTTP client")
+}
 
 #[derive(Debug, Clone)]
 pub struct RoutingTable {
@@ -45,7 +62,8 @@ impl RoutingTable {
 #[derive(Clone)]
 pub struct AppState {
     pub routing: Arc<RwLock<RoutingTable>>,
-    pub http_client: reqwest::Client,
+    http_client: Arc<RwLock<UpstreamHttpClient>>,
+    pub circuit_breaker: Arc<CircuitBreaker>,
     pub config_synced: Arc<RwLock<bool>>,
     config_synced_notify: Arc<Notify>,
     pub gateway_admin_key: Arc<String>,
@@ -58,12 +76,14 @@ pub struct AppState {
 impl AppState {
     pub fn new(routing: RoutingTable, ipc: IpcSender) -> Self {
         let gateway_admin_key = std::env::var("GATEWAY_API_KEY").unwrap_or_default();
+        let connect_timeout_ms = routing.timeouts.connect_timeout_ms;
         AppState {
             routing: Arc::new(RwLock::new(routing)),
-            http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(600))
-                .build()
-                .expect("Failed to create HTTP client"),
+            http_client: Arc::new(RwLock::new(UpstreamHttpClient {
+                client: build_http_client(connect_timeout_ms),
+                connect_timeout_ms,
+            })),
+            circuit_breaker: Arc::new(CircuitBreaker::default()),
             config_synced: Arc::new(RwLock::new(false)),
             config_synced_notify: Arc::new(Notify::new()),
             gateway_admin_key: Arc::new(gateway_admin_key),
@@ -79,6 +99,24 @@ impl AppState {
 
     pub async fn wait_for_config_sync(&self) {
         wait_for_config_sync_state(&self.config_synced, &self.config_synced_notify).await;
+    }
+
+    pub async fn upstream_http_client(&self) -> reqwest::Client {
+        self.http_client.read().await.client.clone()
+    }
+
+    /// reqwest 的 connect timeout 是 ClientBuilder 级设置。配置热更新时仅在值变化时
+    /// 替换共享 Client；普通请求继续 clone 连接池句柄，不会按请求新建 Client。
+    pub async fn update_connect_timeout(&self, connect_timeout_ms: u64) {
+        if self.http_client.read().await.connect_timeout_ms == connect_timeout_ms {
+            return;
+        }
+
+        let next = UpstreamHttpClient {
+            client: build_http_client(connect_timeout_ms),
+            connect_timeout_ms,
+        };
+        *self.http_client.write().await = next;
     }
 }
 

@@ -75,6 +75,7 @@ const KEY_QUOTA_BODY: BodyExample = {
 const TIMEOUTS_BODY: BodyExample = {
   description: "网关超时设置（毫秒，只传要改的字段）",
   json: {
+    connectTimeoutMs: 3000,
     defaultFirstByteTimeoutMs: 60000,
     streamFirstByteTimeoutMs: 60000,
     imageFirstByteTimeoutMs: 120000,
@@ -93,6 +94,9 @@ const FAILOVER_BODY: BodyExample = {
     retryOnNetworkError: true,
     retryOnStatusCodes: [429],
     retryOnStatusRanges: ["5xx"],
+    circuitBreakerEnabled: true,
+    circuitBreakerFailureThreshold: 2,
+    circuitBreakerCooldownMs: 30000,
     customModelFallbacks: [{ model: "gpt-4o", fallbacks: ["gpt-4o-mini"] }]
   }
 }

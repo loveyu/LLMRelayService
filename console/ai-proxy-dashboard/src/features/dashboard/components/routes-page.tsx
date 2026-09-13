@@ -108,6 +108,9 @@ type FailoverFormState = {
   retryOnNetworkError: boolean
   retryOn429: boolean
   retryOn5xx: boolean
+  circuitBreakerEnabled: boolean
+  circuitBreakerFailureThreshold: string
+  circuitBreakerCooldownSeconds: string
 }
 
 type RouteMapRoute = {
@@ -295,6 +298,9 @@ function toFailoverForm(policy: GatewayFailoverPolicyPayload): FailoverFormState
     retryOnNetworkError: policy.retryOnNetworkError,
     retryOn429: policy.retryOnStatusCodes.includes(429),
     retryOn5xx: policy.retryOnStatusRanges.includes("5xx"),
+    circuitBreakerEnabled: policy.circuitBreakerEnabled,
+    circuitBreakerFailureThreshold: String(policy.circuitBreakerFailureThreshold),
+    circuitBreakerCooldownSeconds: String(policy.circuitBreakerCooldownMs / 1000),
   }
 }
 
@@ -308,6 +314,27 @@ function parseBoundedInteger(value: string, label: string, limit: { min: number;
     throw new Error(t("routes.failoverValidationRange", { label, min: limit.min, max: limit.max }))
   }
   return normalized
+}
+
+function parseBoundedSecondsAsMilliseconds(
+  value: string,
+  label: string,
+  limit: { min: number; max: number },
+  t: (key: string, options?: Record<string, unknown>) => string,
+): number {
+  const trimmed = value.trim()
+  if (!trimmed) throw new Error(t("routes.failoverValidationRequired", { label }))
+  const seconds = Number(trimmed)
+  if (!Number.isFinite(seconds)) throw new Error(t("routes.failoverValidationNumber", { label }))
+  const milliseconds = Math.round(seconds * 1000)
+  if (milliseconds < limit.min || milliseconds > limit.max) {
+    throw new Error(t("routes.failoverValidationRange", {
+      label,
+      min: limit.min / 1000,
+      max: limit.max / 1000,
+    }))
+  }
+  return milliseconds
 }
 
 function parseCustomModelFallbacks(
@@ -786,6 +813,55 @@ function GlobalFailoverEditor({
               />
             </div>
           </Field>
+
+          <Field>
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={failoverForm.circuitBreakerEnabled}
+                onCheckedChange={(checked) => setFailoverForm((c) => c ? { ...c, circuitBreakerEnabled: checked } : c)}
+              />
+              <FieldLabel className="!mb-0">{t("routes.circuitBreakerEnabled")}</FieldLabel>
+            </div>
+            <FieldDescription>{t("routes.circuitBreakerHint")}</FieldDescription>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="mb-1 text-[12px] text-muted-foreground">{t("routes.circuitBreakerFailureThreshold")}</div>
+                <Input
+                  type="number"
+                  className="font-mono"
+                  min={failoverPolicy.limits.circuitBreakerFailureThreshold.min}
+                  max={failoverPolicy.limits.circuitBreakerFailureThreshold.max}
+                  value={failoverForm.circuitBreakerFailureThreshold}
+                  disabled={!failoverForm.circuitBreakerEnabled}
+                  onChange={(e) => setFailoverForm((c) => c ? { ...c, circuitBreakerFailureThreshold: e.target.value } : c)}
+                />
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  {t("routes.failoverRangeHint", {
+                    min: failoverPolicy.limits.circuitBreakerFailureThreshold.min,
+                    max: failoverPolicy.limits.circuitBreakerFailureThreshold.max,
+                  })}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-[12px] text-muted-foreground">{t("routes.circuitBreakerCooldown")}</div>
+                <Input
+                  type="number"
+                  className="font-mono"
+                  min={failoverPolicy.limits.circuitBreakerCooldownMs.min / 1000}
+                  max={failoverPolicy.limits.circuitBreakerCooldownMs.max / 1000}
+                  value={failoverForm.circuitBreakerCooldownSeconds}
+                  disabled={!failoverForm.circuitBreakerEnabled}
+                  onChange={(e) => setFailoverForm((c) => c ? { ...c, circuitBreakerCooldownSeconds: e.target.value } : c)}
+                />
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  {t("routes.circuitBreakerCooldownHint", {
+                    min: failoverPolicy.limits.circuitBreakerCooldownMs.min / 1000,
+                    max: failoverPolicy.limits.circuitBreakerCooldownMs.max / 1000,
+                  })}
+                </div>
+              </div>
+            </div>
+          </Field>
         </FieldGroup>
 
         {/* 两种写法 hint */}
@@ -1110,6 +1186,18 @@ export function RoutesPage({
         failoverPolicy.limits.maxFallbackAttempts,
         t,
       )
+      const circuitBreakerFailureThreshold = parseBoundedInteger(
+        failoverForm.circuitBreakerFailureThreshold,
+        t("routes.circuitBreakerFailureThreshold"),
+        failoverPolicy.limits.circuitBreakerFailureThreshold,
+        t,
+      )
+      const circuitBreakerCooldownMs = parseBoundedSecondsAsMilliseconds(
+        failoverForm.circuitBreakerCooldownSeconds,
+        t("routes.circuitBreakerCooldown"),
+        failoverPolicy.limits.circuitBreakerCooldownMs,
+        t,
+      )
       const customModelFallbacks = parseCustomModelFallbacks(
         failoverForm.customModelFallbacks,
         failoverPolicy.limits,
@@ -1125,6 +1213,9 @@ export function RoutesPage({
         retryOnNetworkError: failoverForm.retryOnNetworkError,
         retryOnStatusCodes: failoverForm.retryOn429 ? [408, 429] : [408],
         retryOnStatusRanges: failoverForm.retryOn5xx ? ["5xx"] : [],
+        circuitBreakerEnabled: failoverForm.circuitBreakerEnabled,
+        circuitBreakerFailureThreshold,
+        circuitBreakerCooldownMs,
       })
       setFailoverPolicy(next)
       setFailoverForm(toFailoverForm(next))

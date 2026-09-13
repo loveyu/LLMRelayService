@@ -134,6 +134,52 @@ Enable/disable body:
 { "enabled": true }
 ```
 
+## Gateway Settings
+
+- `GET /settings/timeouts`
+- `PATCH /settings/timeouts`
+- `GET /settings/failover`
+- `PATCH /settings/failover`
+
+Timeout update body (all fields are milliseconds and optional):
+
+```json
+{
+  "connectTimeoutMs": 3000,
+  "defaultFirstByteTimeoutMs": 300000,
+  "streamFirstByteTimeoutMs": 300000,
+  "imageFirstByteTimeoutMs": 300000,
+  "responseIdleTimeoutMs": 300000
+}
+```
+
+`connectTimeoutMs` only limits upstream connection establishment. It is intentionally
+separate from first-byte timeouts so a short connection timeout does not penalize slow
+reasoning models.
+
+Failover updates accept the normal retry/fallback fields plus connection circuit-breaker
+settings:
+
+```json
+{
+  "enabled": true,
+  "retryAttempts": 1,
+  "modelFallbackMode": "same_model",
+  "maxFallbackAttempts": 2,
+  "retryOnTimeout": true,
+  "retryOnNetworkError": true,
+  "retryOnStatusCodes": [408, 429],
+  "retryOnStatusRanges": ["5xx"],
+  "circuitBreakerEnabled": true,
+  "circuitBreakerFailureThreshold": 2,
+  "circuitBreakerCooldownMs": 30000
+}
+```
+
+TCP/DNS/TLS connection failures skip same-route retries and go directly to fallback.
+When the circuit breaker reaches its threshold, subsequent requests skip that channel
+during the cooldown; one half-open probe is admitted afterward.
+
 ## Gateway Forwarding
 
 OpenAPI management is separate from model forwarding. For forwarding tests, use gateway routes directly with the same `GATEWAY_API_KEY`:

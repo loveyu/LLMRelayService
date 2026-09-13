@@ -559,6 +559,7 @@ describe('failover – network error and timeout', () => {
     loadProviderConfigsForTest(singleProviderConfig());
     // Very short first-byte timeout (200 ms) — the mock will delay the first response
     forceTimeoutSettingsForTest({
+      connectTimeoutMs: 3_000,
       defaultFirstByteTimeoutMs: 200,
       streamFirstByteTimeoutMs: 200,
       imageFirstByteTimeoutMs: 200,
@@ -585,6 +586,7 @@ describe('failover – network error and timeout', () => {
   it('returns 504 when all retry attempts time out', async () => {
     loadProviderConfigsForTest(singleProviderConfig());
     forceTimeoutSettingsForTest({
+      connectTimeoutMs: 3_000,
       defaultFirstByteTimeoutMs: 200,
       streamFirstByteTimeoutMs: 200,
       imageFirstByteTimeoutMs: 200,
@@ -611,6 +613,7 @@ describe('failover – network error and timeout', () => {
   it('does NOT retry on timeout when retryOnTimeout is false', async () => {
     loadProviderConfigsForTest(singleProviderConfig());
     forceTimeoutSettingsForTest({
+      connectTimeoutMs: 3_000,
       defaultFirstByteTimeoutMs: 200,
       streamFirstByteTimeoutMs: 200,
       imageFirstByteTimeoutMs: 200,

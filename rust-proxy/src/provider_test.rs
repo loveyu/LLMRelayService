@@ -217,10 +217,11 @@ pub async fn test_provider_handler(
             .await
     } else {
         let req_body = build_probe_body(&test_model, false);
+        let http_client = state.upstream_http_client().await;
         let start = Instant::now();
         let send_result = tokio::time::timeout(
             TEST_TIMEOUT,
-            build_probe_request(&state, &test_url, &auth_header, &auth_value, is_anthropic)
+            build_probe_request(&http_client, &test_url, &auth_header, &auth_value, is_anthropic)
                 .json(&req_body)
                 .send(),
         )
@@ -272,11 +273,12 @@ async fn run_streaming_probe(
     is_anthropic: bool,
 ) -> TestOutcome {
     let stream_body = build_probe_body(test_model, true);
+    let http_client = state.upstream_http_client().await;
 
     let start = Instant::now();
     let send_result = tokio::time::timeout(
         TEST_TIMEOUT,
-        build_probe_request(state, test_url, auth_header, auth_value, is_anthropic)
+        build_probe_request(&http_client, test_url, auth_header, auth_value, is_anthropic)
             .header("accept", "text/event-stream")
             .json(&stream_body)
             .send(),
@@ -306,13 +308,13 @@ fn build_probe_body(model: &str, stream: bool) -> Value {
 
 /// 构造一条到上游的 POST 探测请求（不含 body，由调用方 `.json(&body)` 注入）。
 fn build_probe_request(
-    state: &Arc<AppState>,
+    http_client: &reqwest::Client,
     test_url: &str,
     auth_header: &RouteAuthHeader,
     auth_value: &str,
     is_anthropic: bool,
 ) -> reqwest::RequestBuilder {
-    let mut req = state.http_client.post(test_url).header("content-type", "application/json");
+    let mut req = http_client.post(test_url).header("content-type", "application/json");
     match auth_header {
         RouteAuthHeader::Authorization => {
             req = req.header("authorization", auth_value);

@@ -391,6 +391,7 @@ export type TimeoutLimit = {
 }
 
 export type GatewayTimeoutSettings = {
+  connectTimeoutMs: number
   defaultFirstByteTimeoutMs: number
   streamFirstByteTimeoutMs: number
   imageFirstByteTimeoutMs: number
@@ -407,6 +408,7 @@ export type GatewayTimeoutSettingsPayload = GatewayTimeoutSettings & {
   ok: boolean
   defaults: GatewayTimeoutSettings
   limits: {
+    connect: TimeoutLimit
     firstByte: TimeoutLimit
     responseIdle: TimeoutLimit
   }
@@ -431,6 +433,9 @@ export type GatewayFailoverPolicy = {
   retryOnNetworkError: boolean
   retryOnStatusCodes: number[]
   retryOnStatusRanges: Array<"5xx">
+  circuitBreakerEnabled: boolean
+  circuitBreakerFailureThreshold: number
+  circuitBreakerCooldownMs: number
 }
 
 export type GatewayFailoverPolicyPayload = GatewayFailoverPolicy & {
@@ -441,6 +446,8 @@ export type GatewayFailoverPolicyPayload = GatewayFailoverPolicy & {
     maxFallbackAttempts: { min: number; max: number }
     customModelFallbackRules: { min: number; max: number }
     customModelFallbacksPerRule: { min: number; max: number }
+    circuitBreakerFailureThreshold: { min: number; max: number }
+    circuitBreakerCooldownMs: { min: number; max: number }
   }
   updatedAt: number | null
 }

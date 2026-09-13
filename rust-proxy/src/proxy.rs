@@ -1,5 +1,6 @@
 use crate::app_state::AppState;
 use crate::auth;
+use crate::circuit_breaker::{self, Admission};
 use crate::failover::{self, FailoverTrigger};
 use crate::ipc::RustToTsMessage;
 use crate::responses::{self, ChatSseToResponsesSse};
@@ -268,11 +269,101 @@ pub async fn proxy_handler(
             }
         };
 
+        let circuit_key = circuit_breaker::route_key(&route.channel_name, &target_url);
+        let circuit_enabled = failover_policy.enabled
+            && failover_policy.retry_on_network_error
+            && failover_policy.circuit_breaker_enabled;
+        match state
+            .circuit_breaker
+            .admit(&circuit_key, circuit_enabled, failover_policy.circuit_breaker_cooldown_ms)
+            .await
+        {
+            Admission::Allow => {}
+            Admission::HalfOpenProbe => {
+                info!("Circuit half-open probe for {}", route.channel_name);
+            }
+            Admission::SkipOpen => {
+                let label = describe_route(&route);
+                if !failed_route_chain.contains(&label) {
+                    failed_route_chain.push(label);
+                }
+                failover_reason = Some("circuit_open".to_string());
+                if initial_response_status.is_none() {
+                    initial_response_status = Some(503);
+                    initial_response_status_text = Some("Circuit Open".to_string());
+                    initial_completed_at = Some(
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+                            as u64,
+                    );
+                }
+
+                let is_fallback = attempt_index > 0;
+                send_request_log(
+                    &state,
+                    &request_id,
+                    created_at,
+                    &method,
+                    &uri,
+                    pathname,
+                    &route,
+                    route.resolved_model.as_deref().unwrap_or(&model),
+                    &headers,
+                    &fwd_headers,
+                    &request_body,
+                    &body,
+                    auth_result.api_key_id.clone(),
+                    auth_result.api_key_name.clone(),
+                    if is_fallback { Some(describe_route(&initial_route)) } else { None },
+                    failed_route_chain.clone(),
+                    failover_reason.clone(),
+                    initial_response_status,
+                    initial_response_status_text.clone(),
+                    initial_completed_at,
+                    if is_fallback { Some(initial_route.channel_name.clone()) } else { None },
+                    if is_fallback {
+                        Some(initial_route.resolved_model.clone().unwrap_or_else(|| model.clone()))
+                    } else {
+                        None
+                    },
+                    retry_count,
+                );
+                warn!("Circuit open, skipping {}", route.channel_name);
+
+                if advance_to_next_route(
+                    &mut active_routes,
+                    &mut attempt_index,
+                    &failover_policy,
+                    &model,
+                    &state,
+                    pathname,
+                    search,
+                    request_type.clone(),
+                ) {
+                    retry_count = 0;
+                    continue;
+                }
+
+                emit_terminal_response_log(
+                    &state,
+                    &request_id,
+                    created_at,
+                    503,
+                    "CIRCUIT_OPEN",
+                    serde_json::json!({}),
+                    Some(format!("上游路由熔断中: {}", route.channel_name)),
+                    0,
+                    None,
+                );
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
+        }
+
         let upstream_method =
             reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap_or(reqwest::Method::GET);
 
+        let http_client = state.upstream_http_client().await;
         let mut upstream_req =
-            state.http_client.request(upstream_method, &target_url).headers(fwd_headers.clone());
+            http_client.request(upstream_method, &target_url).headers(fwd_headers.clone());
 
         if !request_body.is_empty() {
             upstream_req = upstream_req.body(request_body.clone());
@@ -329,6 +420,7 @@ pub async fn proxy_handler(
 
         match upstream_result {
             Ok(Ok(upstream_resp)) => {
+                state.circuit_breaker.record_connect_success(&circuit_key).await;
                 let status = upstream_resp.status().as_u16();
                 if initial_response_status.is_none() {
                     initial_response_status = Some(status);
@@ -491,8 +583,9 @@ pub async fn proxy_handler(
                         );
                         continue;
                     }
-                    if try_add_fallbacks(
+                    if advance_to_next_route(
                         &mut active_routes,
+                        &mut attempt_index,
                         &failover_policy,
                         &model,
                         &state,
@@ -500,7 +593,6 @@ pub async fn proxy_handler(
                         search,
                         request_type.clone(),
                     ) {
-                        attempt_index += 1;
                         retry_count = 0;
                         continue;
                     }
@@ -537,6 +629,7 @@ pub async fn proxy_handler(
                 };
             }
             Ok(Err(e)) => {
+                let is_connect_error = e.is_connect();
                 let is_timeout = e.is_timeout();
                 if initial_response_status.is_none() {
                     initial_response_status = Some(if is_timeout { 504 } else { 502 });
@@ -548,11 +641,26 @@ pub async fn proxy_handler(
                             as u64,
                     );
                 }
-                let trigger = if is_timeout {
+                let trigger = if is_connect_error {
+                    FailoverTrigger::ConnectError(e.to_string())
+                } else if is_timeout {
                     FailoverTrigger::Timeout
                 } else {
                     FailoverTrigger::NetworkError(e.to_string())
                 };
+                if is_connect_error {
+                    let opened = state
+                        .circuit_breaker
+                        .record_connect_failure(
+                            &circuit_key,
+                            circuit_enabled,
+                            failover_policy.circuit_breaker_failure_threshold,
+                        )
+                        .await;
+                    if opened {
+                        warn!("Circuit opened for {} after connect failure", route.channel_name);
+                    }
+                }
                 {
                     let label = describe_route(&route);
                     if !failed_route_chain.contains(&label) {
@@ -564,7 +672,9 @@ pub async fn proxy_handler(
                 if failover_policy.enabled
                     && failover::should_trigger_failover(&failover_policy, &trigger)
                 {
-                    if retry_count < failover_policy.retry_attempts {
+                    if failover::should_retry_same_route(&trigger)
+                        && retry_count < failover_policy.retry_attempts
+                    {
                         retry_count += 1;
                         warn!(
                             "{} — retrying ({}/{})",
@@ -574,8 +684,9 @@ pub async fn proxy_handler(
                         );
                         continue;
                     }
-                    if try_add_fallbacks(
+                    if advance_to_next_route(
                         &mut active_routes,
+                        &mut attempt_index,
                         &failover_policy,
                         &model,
                         &state,
@@ -583,7 +694,6 @@ pub async fn proxy_handler(
                         search,
                         request_type.clone(),
                     ) {
-                        attempt_index += 1;
                         retry_count = 0;
                         continue;
                     }
@@ -632,8 +742,9 @@ pub async fn proxy_handler(
                         );
                         continue;
                     }
-                    if try_add_fallbacks(
+                    if advance_to_next_route(
                         &mut active_routes,
+                        &mut attempt_index,
                         &failover_policy,
                         &model,
                         &state,
@@ -641,7 +752,6 @@ pub async fn proxy_handler(
                         search,
                         request_type.clone(),
                     ) {
-                        attempt_index += 1;
                         retry_count = 0;
                         continue;
                     }
@@ -664,6 +774,26 @@ pub async fn proxy_handler(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn advance_to_next_route(
+    active_routes: &mut Vec<RouteResult>,
+    attempt_index: &mut usize,
+    policy: &crate::config::GatewayFailoverPolicy,
+    model: &str,
+    state: &AppState,
+    pathname: &str,
+    search: &str,
+    request_type: crate::config::UpstreamType,
+) -> bool {
+    if *attempt_index + 1 < active_routes.len()
+        || try_add_fallbacks(active_routes, policy, model, state, pathname, search, request_type)
+    {
+        *attempt_index += 1;
+        return true;
+    }
+    false
+}
+
 fn try_add_fallbacks(
     active_routes: &mut Vec<RouteResult>,
     policy: &crate::config::GatewayFailoverPolicy,
@@ -679,6 +809,11 @@ fn try_add_fallbacks(
         return false;
     }
     let max_fallbacks = policy.max_fallback_attempts as usize;
+    let already_added = active_routes.len().saturating_sub(1);
+    if already_added >= max_fallbacks {
+        return false;
+    }
+    let remaining_fallbacks = max_fallbacks - already_added;
 
     let rt = state.routing.try_read().expect("Routing lock");
     let existing: HashSet<_> = active_routes.iter().map(|r| r.channel_name.clone()).collect();
@@ -736,7 +871,7 @@ fn try_add_fallbacks(
     let mut new_routes = Vec::new();
     for r in candidates {
         let key = r.channel_name.clone();
-        if !seen.contains(&key) && added < max_fallbacks {
+        if !seen.contains(&key) && added < remaining_fallbacks {
             seen.insert(key);
             new_routes.push(r);
             added += 1;
@@ -1138,6 +1273,7 @@ fn describe_route(route: &RouteResult) -> String {
 /// One-line failover trigger description for the request log.
 fn describe_trigger(trigger: &failover::FailoverTrigger) -> String {
     match trigger {
+        failover::FailoverTrigger::ConnectError(msg) => format!("connect_error: {msg}"),
         failover::FailoverTrigger::Status(status) => format!("HTTP {status}"),
         failover::FailoverTrigger::Timeout => "timeout".to_string(),
         failover::FailoverTrigger::NetworkError(msg) => format!("network_error: {msg}"),

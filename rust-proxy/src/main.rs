@@ -1,5 +1,6 @@
 mod app_state;
 mod auth;
+mod circuit_breaker;
 mod config;
 mod failover;
 mod ipc;
@@ -77,6 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     config.aliases.len(),
                     config.api_keys.len(),
                 );
+                app_state.update_connect_timeout(config.timeouts.connect_timeout_ms).await;
                 let new_routing = RoutingTable::from_payload(config);
                 {
                     let mut rt = app_state.routing.write().await;

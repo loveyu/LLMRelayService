@@ -11,6 +11,7 @@ import { fetchGatewayTimeoutSettings, updateGatewayTimeoutSettings } from "@/fea
 import type { GatewayTimeoutSettingsPayload, TimeoutLimit } from "@/features/dashboard/types"
 
 type TimeoutFormState = {
+  connectTimeoutSeconds: string
   defaultFirstByteTimeoutSeconds: string
   streamFirstByteTimeoutSeconds: string
   imageFirstByteTimeoutSeconds: string
@@ -26,6 +27,7 @@ function secondsText(ms: number): string {
 
 function toForm(settings: GatewayTimeoutSettingsPayload): TimeoutFormState {
   return {
+    connectTimeoutSeconds: secondsText(settings.connectTimeoutMs),
     defaultFirstByteTimeoutSeconds: secondsText(settings.defaultFirstByteTimeoutMs),
     streamFirstByteTimeoutSeconds: secondsText(settings.streamFirstByteTimeoutMs),
     imageFirstByteTimeoutSeconds: secondsText(settings.imageFirstByteTimeoutMs),
@@ -171,6 +173,7 @@ export function SettingsPage({ onUnauthorized }: { onUnauthorized: () => void })
   const { t } = useTranslation()
   const [settings, setSettings] = useState<GatewayTimeoutSettingsPayload | null>(null)
   const [form, setForm] = useState<TimeoutFormState>({
+    connectTimeoutSeconds: "3",
     defaultFirstByteTimeoutSeconds: "300",
     streamFirstByteTimeoutSeconds: "300",
     imageFirstByteTimeoutSeconds: "300",
@@ -227,6 +230,7 @@ export function SettingsPage({ onUnauthorized }: { onUnauthorized: () => void })
   const restoreDefaults = () => {
     if (!settings) return
     setForm({
+      connectTimeoutSeconds: secondsText(settings.defaults.connectTimeoutMs),
       defaultFirstByteTimeoutSeconds: secondsText(settings.defaults.defaultFirstByteTimeoutMs),
       streamFirstByteTimeoutSeconds: secondsText(settings.defaults.streamFirstByteTimeoutMs),
       imageFirstByteTimeoutSeconds: secondsText(settings.defaults.imageFirstByteTimeoutMs),
@@ -239,6 +243,7 @@ export function SettingsPage({ onUnauthorized }: { onUnauthorized: () => void })
     try {
       setSaving(true)
       const payload = {
+        connectTimeoutMs: parseSeconds(form.connectTimeoutSeconds, t("settings.connectTimeoutLabel"), settings.limits.connect, t),
         defaultFirstByteTimeoutMs: parseSeconds(form.defaultFirstByteTimeoutSeconds, t("settings.defaultFirstByteLabel"), settings.limits.firstByte, t),
         streamFirstByteTimeoutMs: parseSeconds(form.streamFirstByteTimeoutSeconds, t("settings.streamFirstByteLabel"), settings.limits.firstByte, t),
         imageFirstByteTimeoutMs: parseSeconds(form.imageFirstByteTimeoutSeconds, t("settings.imageFirstByteLabel"), settings.limits.firstByte, t),
@@ -303,7 +308,7 @@ export function SettingsPage({ onUnauthorized }: { onUnauthorized: () => void })
             <SectionNavItem
               icon={<Clock className="h-4 w-4" />}
               label={t("settings.navUpstream")}
-              count={t("settings.itemCount", { count: 4 })}
+              count={t("settings.itemCount", { count: 5 })}
               active={activeSection === "upstream"}
               onClick={() => goToSection("upstream")}
             />
@@ -339,6 +344,13 @@ export function SettingsPage({ onUnauthorized }: { onUnauthorized: () => void })
               >
                 <SectionTitle>{t("settings.firstByteTitle")}</SectionTitle>
                 <div className="mt-4 grid gap-3.5 md:grid-cols-2">
+                  <SettingRow
+                    label={t("settings.connectTimeoutLabel")}
+                    desc={fieldDesc(settings.defaults.connectTimeoutMs, settings.limits.connect)}
+                    value={form.connectTimeoutSeconds}
+                    onChange={(value) => setForm((c) => ({ ...c, connectTimeoutSeconds: value }))}
+                    limit={settings.limits.connect}
+                  />
                   <SettingRow
                     label={t("settings.defaultFirstByteLabel")}
                     desc={fieldDesc(settings.defaults.defaultFirstByteTimeoutMs, settings.limits.firstByte)}
