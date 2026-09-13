@@ -161,6 +161,10 @@ fn resolve_explicit_target_route(
 ) -> Option<RouteResult> {
     let entry = resolve_provider_by_ref(&target.provider, providers)?;
 
+    if !entry.enabled {
+        return None;
+    }
+
     if entry.routing_visibility.as_ref() == Some(&RoutingVisibility::ExplicitOnly) {
         return None;
     }
@@ -283,7 +287,7 @@ fn deduplicate_route_results(results: &mut Vec<RouteResult>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ConfigEntry, ModelConfig};
+    use crate::config::{AliasTarget, ConfigEntry, ModelAliasTarget, ModelConfig};
 
     fn anthropic_entry(base: &str, model: &str) -> ConfigEntry {
         ConfigEntry {
@@ -327,6 +331,49 @@ mod tests {
             auto_sync_models: false,
             claude_code_compat: false,
         }
+    }
+
+    #[test]
+    fn alias_skips_disabled_target_and_uses_next_enabled_target() {
+        let mut disabled = anthropic_entry("https://disabled.example", "claude-opus-5");
+        disabled.enabled = false;
+        disabled.provider_uuid = Some("provider-disabled".to_string());
+
+        let mut enabled = anthropic_entry("https://enabled.example", "glm-5.3");
+        enabled.provider_uuid = Some("provider-enabled".to_string());
+
+        let providers = std::collections::HashMap::from([
+            ("kiro-anthrpoic".to_string(), disabled),
+            ("claude-relay-anthropic".to_string(), enabled),
+        ]);
+        let aliases = std::collections::HashMap::from([(
+            "claude-code".to_string(),
+            AliasTarget {
+                provider: "provider-disabled".to_string(),
+                model: "claude-opus-5".to_string(),
+                targets: Some(vec![
+                    ModelAliasTarget {
+                        provider: "provider-disabled".to_string(),
+                        model: "claude-opus-5".to_string(),
+                    },
+                    ModelAliasTarget {
+                        provider: "provider-enabled".to_string(),
+                        model: "glm-5.3".to_string(),
+                    },
+                ]),
+                visible: true,
+                return_real_model: false,
+            },
+        )]);
+
+        let routes =
+            resolve_routes_by_model("/v1/messages", "", "claude-code", None, &providers, &aliases);
+
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].channel_name, "claude-relay-anthropic");
+        assert_eq!(routes[0].resolved_model.as_deref(), Some("glm-5.3"));
+        assert_eq!(routes[0].virtual_model.as_deref(), Some("claude-code"));
+        assert_eq!(routes[0].target_url, "https://enabled.example/v1/messages");
     }
 
     /// Regression: `/anthropic/` type-forced prefix must not be doubled onto an
