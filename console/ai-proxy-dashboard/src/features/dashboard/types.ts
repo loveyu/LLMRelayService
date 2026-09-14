@@ -33,6 +33,9 @@ export type ConsoleResponseTiming = {
   generation_duration_ms?: number | null
   response_body_bytes?: number | null
   has_streaming_content?: boolean
+  disconnect_source?: "client" | "upstream" | null
+  disconnected_at?: number | null
+  disconnect_latency_ms?: number | null
 }
 
 export type ConsoleModelPricing = {

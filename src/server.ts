@@ -276,6 +276,8 @@ import('./rust-process').then(({ startRustProxy: startRust, stopRustProxy }) => 
                 first_token_at: msg.firstTokenAt ?? null,
                 completed_at: msg.completedAt ?? null,
                 has_streaming_content: msg.hasStreamingContent ?? false,
+                disconnect_source: msg.disconnectSource ?? null,
+                disconnected_at: msg.disconnectedAt ?? null,
               },
             });
             break;

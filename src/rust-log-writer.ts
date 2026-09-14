@@ -116,20 +116,31 @@ async function saveResponseLog(msg: any) {
     response_status: msg.responseStatus,
     response_status_text: msg.responseStatusText,
     response_headers: msg.responseHeaders,
-    response_body_bytes: msg.responseBodyBytes,
-    first_chunk_at: msg.firstChunkAt ?? undefined,
-    first_token_at: msg.firstTokenAt ?? undefined,
-    completed_at: msg.completedAt ?? undefined,
-    has_streaming_content: msg.hasStreamingContent,
-    response_model: msg.responseModel ?? undefined,
-    stop_reason: msg.stopReason ?? undefined,
+    response_payload: msg.responsePayload ?? null,
+    response_payload_truncated: false,
+    response_timing: {
+      response_body_bytes: msg.responseBodyBytes ?? 0,
+      first_chunk_at: msg.firstChunkAt ?? null,
+      first_token_at: msg.firstTokenAt ?? null,
+      completed_at: msg.completedAt ?? null,
+      has_streaming_content: msg.hasStreamingContent ?? false,
+      disconnect_source: msg.disconnectSource ?? null,
+      disconnected_at: msg.disconnectedAt ?? null,
+    },
     response_usage: {
       model: msg.responseModel ?? '',
+      stop_reason: msg.stopReason ?? '',
       input_tokens: msg.inputTokens ?? 0,
       output_tokens: msg.outputTokens ?? 0,
       total_tokens: msg.totalTokens ?? 0,
+      cache_creation_input_tokens: msg.cacheCreationInputTokens ?? 0,
+      cache_read_input_tokens: msg.cacheReadInputTokens ?? 0,
+      cached_input_tokens: msg.cachedInputTokens ?? 0,
+      reasoning_output_tokens: 0,
+      ephemeral_5m_input_tokens: 0,
+      ephemeral_1h_input_tokens: 0,
     },
-  } as any);
+  });
   console.log(`[log-writer] Response saved: ${msg.requestId.substring(0,8)} status=${msg.responseStatus}`);
 }
 

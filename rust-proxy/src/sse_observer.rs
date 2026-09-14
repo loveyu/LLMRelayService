@@ -26,6 +26,8 @@ pub(crate) struct PassthroughObserver {
     pub first_chunk_at_ms: Option<u64>,
     pub first_token_at_ms: Option<u64>,
     pub total_bytes: u64,
+    pub disconnect_source: Option<&'static str>,
+    pub disconnected_at_ms: Option<u64>,
     truncated: bool,
     created_at_ms: u64,
     start: Instant,
@@ -40,6 +42,8 @@ impl PassthroughObserver {
             first_chunk_at_ms: None,
             first_token_at_ms: None,
             total_bytes: 0,
+            disconnect_source: None,
+            disconnected_at_ms: None,
             truncated: false,
             created_at_ms,
             start,
@@ -78,6 +82,15 @@ impl PassthroughObserver {
         Instant::now() >= self.deadline
     }
 
+    fn mark_disconnect(&mut self, source: &'static str) {
+        if self.disconnect_source.is_some() {
+            return;
+        }
+        self.disconnect_source = Some(source);
+        self.disconnected_at_ms =
+            self.created_at_ms.checked_add(self.start.elapsed().as_millis() as u64);
+    }
+
     pub fn parse_usage(&self) -> SseUsage {
         let body = String::from_utf8_lossy(&self.buffer);
         parse_sse_usage(&body)
@@ -107,16 +120,23 @@ pub struct ObservingSseStream<S> {
     inner: S,
     observer: Arc<Mutex<Option<PassthroughObserver>>>,
     notify: Arc<Notify>,
+    finished: bool,
 }
 
 impl<S> ObservingSseStream<S> {
     pub fn new(inner: S, handle: SseObserverHandle) -> Self {
-        Self { inner, observer: handle.observer, notify: handle.notify }
+        Self { inner, observer: handle.observer, notify: handle.notify, finished: false }
     }
 }
 
 impl<S> Drop for ObservingSseStream<S> {
     fn drop(&mut self) {
+        if !self.finished
+            && let Ok(mut guard) = self.observer.try_lock()
+            && let Some(ref mut obs) = *guard
+        {
+            obs.mark_disconnect("client");
+        }
         self.notify.notify_one();
     }
 }
@@ -142,8 +162,19 @@ where
                 }
                 Poll::Ready(Some(Ok(chunk)))
             }
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(axum::Error::new(format!("{e:?}"))))),
-            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Ready(Some(Err(e))) => {
+                if let Ok(mut guard) = self.observer.try_lock()
+                    && let Some(ref mut obs) = *guard
+                {
+                    obs.mark_disconnect("upstream");
+                }
+                self.finished = true;
+                Poll::Ready(Some(Err(axum::Error::new(format!("{e:?}")))))
+            }
+            Poll::Ready(None) => {
+                self.finished = true;
+                Poll::Ready(None)
+            }
             Poll::Pending => Poll::Pending,
         }
     }
@@ -378,6 +409,40 @@ mod tests {
         assert_eq!(usage.output_tokens, Some(1));
         assert_eq!(usage.total_tokens, Some(6));
         assert_eq!(usage.stop_reason.as_deref(), Some("stop"));
+        assert_eq!(obs.disconnect_source, None);
+        assert_eq!(obs.disconnected_at_ms, None);
+    }
+
+    #[tokio::test]
+    async fn dropping_unfinished_stream_records_client_disconnect() {
+        let handle = SseObserverHandle::new(1_000);
+        let stream = ObservingSseStream::new(
+            futures::stream::pending::<Result<Bytes, std::io::Error>>(),
+            handle.clone(),
+        );
+        drop(stream);
+        handle.notify.notified().await;
+
+        let guard = handle.observer.lock().await;
+        let obs = guard.as_ref().expect("observer retained");
+        assert_eq!(obs.disconnect_source, Some("client"));
+        assert!(obs.disconnected_at_ms.is_some());
+    }
+
+    #[tokio::test]
+    async fn upstream_stream_error_records_upstream_disconnect() {
+        let handle = SseObserverHandle::new(1_000);
+        let chunks =
+            vec![Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "upstream closed"))];
+        let mut stream = ObservingSseStream::new(futures::stream::iter(chunks), handle.clone());
+        assert!(stream.next().await.expect("error item").is_err());
+        drop(stream);
+        handle.notify.notified().await;
+
+        let guard = handle.observer.lock().await;
+        let obs = guard.as_ref().expect("observer retained");
+        assert_eq!(obs.disconnect_source, Some("upstream"));
+        assert!(obs.disconnected_at_ms.is_some());
     }
 
     #[test]

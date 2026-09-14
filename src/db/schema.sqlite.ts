@@ -39,6 +39,8 @@ export const consoleRequests = sqliteTable('console_requests', {
   firstChunkAt: integer('first_chunk_at', { mode: 'number' }),
   firstTokenAt: integer('first_token_at', { mode: 'number' }),
   completedAt: integer('completed_at', { mode: 'number' }),
+  disconnectSource: text('disconnect_source'),
+  disconnectedAt: integer('disconnected_at', { mode: 'number' }),
   hasStreamingContent: integer('has_streaming_content').notNull().default(0),
   responseModel: text('response_model'),
   stopReason: text('stop_reason'),

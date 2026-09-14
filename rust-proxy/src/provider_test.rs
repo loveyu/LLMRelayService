@@ -858,6 +858,8 @@ fn emit_response_log(state: &AppState, request_id: &str, created_at: u64, outcom
             cache_read_input_tokens: None,
             cached_input_tokens: None,
             response_payload,
+            disconnect_source: None,
+            disconnected_at: None,
         });
     });
 }

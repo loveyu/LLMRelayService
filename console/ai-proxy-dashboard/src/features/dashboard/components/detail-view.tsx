@@ -312,6 +312,11 @@ export function DetailView({
   const usage = record.response_usage ?? {}
   const timing = record.response_timing ?? {}
   const st = statusStyle(record.response_status)
+  const disconnectLabel = timing.disconnect_source === "client"
+    ? t("detail.clientDisconnected")
+    : timing.disconnect_source === "upstream"
+      ? t("detail.upstreamDisconnected")
+      : null
 
   // Request meta rows for request tab
   const originalHeadersText = JSON.stringify(record.original_headers ?? {}, null, 2)
@@ -378,6 +383,17 @@ export function DetailView({
         <Alert variant="destructive" className="mt-3">
           <AlertTitle>{t("detail.refreshFailed")}</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {disconnectLabel ? (
+        <Alert variant="destructive" className="mt-3">
+          <AlertTitle>{disconnectLabel}</AlertTitle>
+          <AlertDescription>
+            {t("detail.disconnectSummary", {
+              duration: formatDuration(timing.disconnect_latency_ms),
+              time: formatTime(timing.disconnected_at),
+            })}
+          </AlertDescription>
         </Alert>
       ) : null}
 

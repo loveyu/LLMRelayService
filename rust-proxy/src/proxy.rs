@@ -18,6 +18,7 @@ use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
@@ -35,6 +36,63 @@ const HOP_BY_HOP_HEADERS: &[&str] = &[
     "transfer-encoding",
     "upgrade",
 ];
+
+const CLIENT_CLOSED_REQUEST_STATUS: u16 = 499;
+
+/// Records a downstream disconnect when Axum drops the in-flight handler future.
+/// The guard is armed only after RequestLog has entered the same IPC queue, so the
+/// sequential TS consumer always has a row to update with the 499 terminal event.
+struct ClientDisconnectLogGuard {
+    ipc: Arc<crate::ipc::IpcSender>,
+    request_id: String,
+    armed: AtomicBool,
+}
+
+impl ClientDisconnectLogGuard {
+    fn new(ipc: Arc<crate::ipc::IpcSender>, request_id: String) -> Self {
+        Self { ipc, request_id, armed: AtomicBool::new(false) }
+    }
+
+    fn arm(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+
+    fn disarm(&self) {
+        self.armed.store(false, Ordering::Release);
+    }
+}
+
+impl Drop for ClientDisconnectLogGuard {
+    fn drop(&mut self) {
+        if !self.armed.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        let disconnected_at =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        self.ipc.send(RustToTsMessage::ResponseLog {
+            request_id: self.request_id.clone(),
+            response_status: CLIENT_CLOSED_REQUEST_STATUS,
+            response_status_text: "Client Closed Request".to_string(),
+            response_headers: serde_json::json!({}),
+            response_body_bytes: 0,
+            first_chunk_at: None,
+            first_token_at: None,
+            completed_at: Some(disconnected_at),
+            has_streaming_content: false,
+            response_model: None,
+            stop_reason: None,
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: None,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+            cached_input_tokens: None,
+            response_payload: Some("客户端在响应完成前断开连接".to_string()),
+            disconnect_source: Some("client".to_string()),
+            disconnected_at: Some(disconnected_at),
+        });
+    }
+}
 
 fn hop_by_hop_set() -> &'static HashSet<String> {
     use std::sync::OnceLock;
@@ -94,11 +152,38 @@ pub async fn proxy_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, StatusCode> {
-    state.wait_for_config_sync().await;
-
     let request_id = uuid::Uuid::new_v4().to_string();
     let created_at =
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    let disconnect_guard = ClientDisconnectLogGuard::new(state.ipc.clone(), request_id.clone());
+    let result = proxy_handler_inner(
+        state,
+        method,
+        uri,
+        headers,
+        body,
+        request_id,
+        created_at,
+        &disconnect_guard,
+    )
+    .await;
+    disconnect_guard.disarm();
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn proxy_handler_inner(
+    state: Arc<AppState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+    request_id: String,
+    created_at: u64,
+    disconnect_guard: &ClientDisconnectLogGuard,
+) -> Result<Response, StatusCode> {
+    state.wait_for_config_sync().await;
+
     let _t_start = Instant::now();
 
     let pathname = uri.path();
@@ -194,6 +279,7 @@ pub async fn proxy_handler(
                 serde_json::json!({}),
                 Some(format!("所有上游路由均已失败: {pathname}")),
                 0,
+                None,
                 None,
             );
             return Err(StatusCode::BAD_GATEWAY);
@@ -353,6 +439,7 @@ pub async fn proxy_handler(
                     Some(format!("上游路由熔断中: {}", route.channel_name)),
                     0,
                     None,
+                    None,
                 );
                 return Err(StatusCode::SERVICE_UNAVAILABLE);
             }
@@ -417,6 +504,7 @@ pub async fn proxy_handler(
             original_request_model,
             retry_count,
         );
+        disconnect_guard.arm();
 
         let t_send = Instant::now();
         let upstream_result = tokio::time::timeout(timeout_dur, upstream_req.send()).await;
@@ -466,7 +554,22 @@ pub async fn proxy_handler(
 
                     let result = match result {
                         Ok(r) => r,
-                        Err(status) => return Err(status),
+                        Err(BuildResponseError::Status(status)) => return Err(status),
+                        Err(BuildResponseError::UpstreamDisconnected(error)) => {
+                            emit_terminal_response_log(
+                                &state,
+                                &request_id,
+                                created_at,
+                                502,
+                                "Upstream Disconnected",
+                                rh,
+                                Some(format!("读取上游响应时连接中断: {error}")),
+                                0,
+                                route.resolved_model.clone(),
+                                Some("upstream"),
+                            );
+                            return Err(StatusCode::BAD_GATEWAY);
+                        }
                     };
 
                     let usage = result.usage.clone();
@@ -508,6 +611,8 @@ pub async fn proxy_handler(
                                 cache_read_input_tokens: cache.cache_read,
                                 cached_input_tokens: cache.cached,
                                 response_payload: body_content,
+                                disconnect_source: None,
+                                disconnected_at: None,
                             });
                         });
                     }
@@ -523,14 +628,25 @@ pub async fn proxy_handler(
                             {
                                 let usage = obs.parse_usage();
                                 let body_text = obs.body_text();
+                                let disconnect_source =
+                                    obs.disconnect_source.map(ToString::to_string);
+                                let disconnected_at = obs.disconnected_at_ms;
+                                let (final_status, final_status_text) = match obs.disconnect_source
+                                {
+                                    Some("client") => {
+                                        (CLIENT_CLOSED_REQUEST_STATUS, "Client Closed Request")
+                                    }
+                                    Some("upstream") => (502, "Upstream Disconnected"),
+                                    _ => (200, "OK"),
+                                };
                                 let now = SystemTime::now()
                                     .duration_since(UNIX_EPOCH)
                                     .unwrap_or_default()
                                     .as_millis() as u64;
                                 ipc.send(RustToTsMessage::ResponseLog {
                                     request_id: rid,
-                                    response_status: 200,
-                                    response_status_text: "OK".to_string(),
+                                    response_status: final_status,
+                                    response_status_text: final_status_text.to_string(),
                                     response_headers: hdrs,
                                     response_body_bytes: obs.total_bytes,
                                     first_chunk_at: obs.first_chunk_at_ms,
@@ -538,7 +654,7 @@ pub async fn proxy_handler(
                                     // chunk (TTFB) for formats we can't classify, so the metric
                                     // never regresses to blank for the rewrite/conversion paths.
                                     first_token_at: obs.first_token_at_ms.or(obs.first_chunk_at_ms),
-                                    completed_at: Some(now),
+                                    completed_at: disconnected_at.or(Some(now)),
                                     has_streaming_content: true,
                                     response_model: resp_model,
                                     stop_reason: usage.stop_reason,
@@ -549,6 +665,8 @@ pub async fn proxy_handler(
                                     cache_read_input_tokens: usage.cache_read_input_tokens,
                                     cached_input_tokens: usage.cached_input_tokens,
                                     response_payload: Some(body_text),
+                                    disconnect_source,
+                                    disconnected_at,
                                 });
                             }
                         });
@@ -626,10 +744,26 @@ pub async fn proxy_handler(
                             rw.body_content.clone(),
                             rw.body_bytes,
                             route.resolved_model.clone(),
+                            None,
                         );
                         Ok(rw.response)
                     }
-                    Err(s) => Err(s),
+                    Err(BuildResponseError::Status(status)) => Err(status),
+                    Err(BuildResponseError::UpstreamDisconnected(error)) => {
+                        emit_terminal_response_log(
+                            &state,
+                            &request_id,
+                            created_at,
+                            502,
+                            "Upstream Disconnected",
+                            err_headers,
+                            Some(format!("读取上游错误响应时连接中断: {error}")),
+                            0,
+                            route.resolved_model.clone(),
+                            Some("upstream"),
+                        );
+                        Err(StatusCode::BAD_GATEWAY)
+                    }
                 };
             }
             Ok(Err(e)) => {
@@ -714,6 +848,7 @@ pub async fn proxy_handler(
                     Some(format!("连接上游失败: {e}")),
                     0,
                     None,
+                    Some("upstream"),
                 );
                 return Err(StatusCode::BAD_GATEWAY);
             }
@@ -770,6 +905,7 @@ pub async fn proxy_handler(
                     serde_json::json!({}),
                     Some("上游响应超时".to_string()),
                     0,
+                    None,
                     None,
                 );
                 return Err(StatusCode::GATEWAY_TIMEOUT);
@@ -898,6 +1034,11 @@ struct ResponseWithUsage {
     sse_observer: Option<SseObserverHandle>,
 }
 
+enum BuildResponseError {
+    Status(StatusCode),
+    UpstreamDisconnected(String),
+}
+
 async fn build_response(
     upstream_resp: reqwest::Response,
     route: &RouteResult,
@@ -905,7 +1046,7 @@ async fn build_response(
     responses_model: &str,
     _idle_timeout_ms: u64,
     created_at: u64,
-) -> Result<ResponseWithUsage, StatusCode> {
+) -> Result<ResponseWithUsage, BuildResponseError> {
     let status = StatusCode::from_u16(upstream_resp.status().as_u16())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let upstream_headers = upstream_resp.headers().clone();
@@ -948,16 +1089,19 @@ async fn build_response(
 
     if converting_responses && !is_sse {
         // Non-streaming chat completions → Responses
-        let body_bytes = upstream_resp.bytes().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+        let body_bytes = upstream_resp
+            .bytes()
+            .await
+            .map_err(|error| BuildResponseError::UpstreamDisconnected(error.to_string()))?;
         let len = body_bytes.len() as u64;
         let converted = crate::responses::convert_chat_to_responses(&body_bytes)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| BuildResponseError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
         let body_str = String::from_utf8_lossy(&converted).to_string();
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/json")
             .body(Body::from(converted))
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| BuildResponseError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
         return Ok(ResponseWithUsage {
             response,
             usage: None,
@@ -977,7 +1121,7 @@ async fn build_response(
             let response = response_builder
                 .header("content-type", "text/event-stream")
                 .body(Body::from_stream(observed))
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .map_err(|_| BuildResponseError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
             return Ok(ResponseWithUsage {
                 response,
                 usage: None,
@@ -994,7 +1138,7 @@ async fn build_response(
             let observed = ObservingSseStream::new(body_stream, observer_handle.clone());
             let response = response_builder
                 .body(Body::from_stream(observed))
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .map_err(|_| BuildResponseError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
             return Ok(ResponseWithUsage {
                 response,
                 usage: None,
@@ -1005,13 +1149,16 @@ async fn build_response(
         }
 
         // Non-SSE with model rewriter: read full body, rewrite, extract usage
-        let body_bytes = upstream_resp.bytes().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+        let body_bytes = upstream_resp
+            .bytes()
+            .await
+            .map_err(|error| BuildResponseError::UpstreamDisconnected(error.to_string()))?;
         let len = body_bytes.len() as u64;
         let rewritten = rw.rewrite_chunk(&String::from_utf8_lossy(&body_bytes));
         let usage = extract_usage(&rewritten);
         let response = response_builder
             .body(Body::from(rewritten.clone()))
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| BuildResponseError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
         Ok(ResponseWithUsage {
             response,
             usage,
@@ -1029,7 +1176,7 @@ async fn build_response(
             let response = response_builder
                 .header("content-type", "text/event-stream")
                 .body(Body::from_stream(observed))
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .map_err(|_| BuildResponseError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
             return Ok(ResponseWithUsage {
                 response,
                 usage: None,
@@ -1045,7 +1192,7 @@ async fn build_response(
                 ObservingSseStream::new(upstream_resp.bytes_stream(), observer_handle.clone());
             let response = response_builder
                 .body(Body::from_stream(body_stream))
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .map_err(|_| BuildResponseError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
             return Ok(ResponseWithUsage {
                 response,
                 usage: None,
@@ -1056,13 +1203,16 @@ async fn build_response(
         }
 
         // Non-SSE: read full body, extract usage
-        let body_bytes = upstream_resp.bytes().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+        let body_bytes = upstream_resp
+            .bytes()
+            .await
+            .map_err(|error| BuildResponseError::UpstreamDisconnected(error.to_string()))?;
         let len = body_bytes.len() as u64;
         let body_str = String::from_utf8_lossy(&body_bytes).to_string();
         let usage = extract_usage(&body_str);
         let response = response_builder
             .body(Body::from(body_bytes.to_vec()))
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| BuildResponseError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
         Ok(ResponseWithUsage {
             response,
             usage,
@@ -1388,6 +1538,7 @@ fn emit_terminal_response_log(
     body_content: Option<String>,
     body_bytes: u64,
     response_model: Option<String>,
+    disconnect_source: Option<&str>,
 ) {
     let usage = body_content.as_deref().and_then(|b| {
         serde_json::from_str::<serde_json::Value>(b).ok().and_then(|v| v.get("usage").cloned())
@@ -1400,6 +1551,8 @@ fn emit_terminal_response_log(
     let ipc = state.ipc.clone();
     let rid = request_id.to_string();
     let stext = status_text.to_string();
+    let disconnect_source = disconnect_source.map(ToString::to_string);
+    let disconnected_at = disconnect_source.as_ref().map(|_| now);
     tokio::spawn(async move {
         ipc.send(RustToTsMessage::ResponseLog {
             request_id: rid,
@@ -1420,6 +1573,51 @@ fn emit_terminal_response_log(
             cache_read_input_tokens: cache.cache_read,
             cached_input_tokens: cache.cached,
             response_payload: body_content,
+            disconnect_source,
+            disconnected_at,
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn client_disconnect_guard_emits_499_with_source_and_timestamp() {
+        let (sender, mut receiver) = crate::ipc::IpcSender::test_channel();
+        let guard = ClientDisconnectLogGuard::new(Arc::new(sender), "request-1".to_string());
+        guard.arm();
+        drop(guard);
+
+        let message = receiver.recv().await.expect("client disconnect log");
+        match message {
+            RustToTsMessage::ResponseLog {
+                request_id,
+                response_status,
+                disconnect_source,
+                disconnected_at,
+                completed_at,
+                ..
+            } => {
+                assert_eq!(request_id, "request-1");
+                assert_eq!(response_status, CLIENT_CLOSED_REQUEST_STATUS);
+                assert_eq!(disconnect_source.as_deref(), Some("client"));
+                assert!(disconnected_at.is_some());
+                assert_eq!(completed_at, disconnected_at);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn disarmed_client_disconnect_guard_emits_nothing() {
+        let (sender, mut receiver) = crate::ipc::IpcSender::test_channel();
+        let guard = ClientDisconnectLogGuard::new(Arc::new(sender), "request-2".to_string());
+        guard.arm();
+        guard.disarm();
+        drop(guard);
+
+        assert!(receiver.try_recv().is_err());
+    }
 }

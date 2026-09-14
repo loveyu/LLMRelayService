@@ -120,6 +120,11 @@ pub enum RustToTsMessage {
         cached_input_tokens: Option<u32>,
         #[serde(rename = "responsePayload")]
         response_payload: Option<String>,
+        /// 连接异常终止来源：`client` 表示下游客户端断开，`upstream` 表示上游连接中断。
+        #[serde(rename = "disconnectSource", default)]
+        disconnect_source: Option<String>,
+        #[serde(rename = "disconnectedAt", default)]
+        disconnected_at: Option<u64>,
     },
     RequestConfigSync,
     Pong {
@@ -161,6 +166,12 @@ impl IpcSender {
         if let Err(e) = self.tx.send(msg) {
             warn!("Failed to queue IPC message: {e}");
         }
+    }
+
+    #[cfg(test)]
+    pub fn test_channel() -> (Self, mpsc::UnboundedReceiver<RustToTsMessage>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (Self { tx }, rx)
     }
 }
 

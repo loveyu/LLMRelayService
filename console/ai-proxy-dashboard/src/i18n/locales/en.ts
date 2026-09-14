@@ -365,6 +365,7 @@ export default {
     failedOver: "Failed over",
     retriedSameRoute: "Retried",
     firstLabel: "1st",
+    firstOrElapsedLabel: "1st/Elapsed",
     totalLabel: "Tot",
     inputLabel: "In",
     outputLabel: "Out",
@@ -387,6 +388,9 @@ export default {
     requestModel: "Request model: {{model}}",
     responseModel: "Response model: {{model}}",
     anonymous: "Anonymous",
+    clientDisconnected: "Client closed",
+    upstreamDisconnected: "Upstream disconnected",
+    disconnectSummary: "Actual elapsed {{duration}} · disconnected at {{time}}",
   },
 
   // ── Detail Page ──
@@ -432,6 +436,9 @@ export default {
     firstToken: "First Token",
     duration: "Duration",
     generationDuration: "Generation Duration",
+    clientDisconnected: "Client cancelled/disconnected",
+    upstreamDisconnected: "Upstream server disconnected",
+    disconnectSummary: "Actual elapsed {{duration}}, disconnected at {{time}}",
     inputTokens: "Input Tokens",
     outputTokens: "Output Tokens",
     responseBodySize: "Response Body Size",

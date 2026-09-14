@@ -365,6 +365,7 @@ export default {
     failedOver: "已回退",
     retriedSameRoute: "已重试",
     firstLabel: "首",
+    firstOrElapsedLabel: "首/实耗",
     totalLabel: "总",
     inputLabel: "入",
     outputLabel: "出",
@@ -387,6 +388,9 @@ export default {
     requestModel: "请求模型: {{model}}",
     responseModel: "实际响应模型: {{model}}",
     anonymous: "匿名",
+    clientDisconnected: "客户端断开",
+    upstreamDisconnected: "上游断开",
+    disconnectSummary: "实际耗时 {{duration}} · 断开于 {{time}}",
   },
 
   // ── Detail Page ──
@@ -432,6 +436,9 @@ export default {
     firstToken: "首 token",
     duration: "总时长",
     generationDuration: "生成时长",
+    clientDisconnected: "客户端已取消/断开",
+    upstreamDisconnected: "上游服务端已断开",
+    disconnectSummary: "实际耗时 {{duration}}，断开时间 {{time}}",
     inputTokens: "输入 tokens",
     outputTokens: "输出 tokens",
     responseBodySize: "响应体积",

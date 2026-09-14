@@ -32,6 +32,8 @@ export const consoleRequests = pgTable('console_requests', {
   firstChunkAt: bigint('first_chunk_at', { mode: 'number' }),
   firstTokenAt: bigint('first_token_at', { mode: 'number' }),
   completedAt: bigint('completed_at', { mode: 'number' }),
+  disconnectSource: text('disconnect_source'),
+  disconnectedAt: bigint('disconnected_at', { mode: 'number' }),
   hasStreamingContent: integer('has_streaming_content').notNull().default(0),
   responseModel: text('response_model'),
   stopReason: text('stop_reason'),

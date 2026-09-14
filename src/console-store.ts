@@ -64,14 +64,19 @@ export interface ResponseTimingSnapshotForConsole {
   first_chunk_at: number | null;
   first_token_at: number | null;
   completed_at: number | null;
+  disconnect_source?: 'client' | 'upstream' | null;
+  disconnected_at?: number | null;
   has_streaming_content: boolean;
 }
 
 export interface ResponseTimingForConsole extends ResponseTimingSnapshotForConsole {
+  disconnect_source: 'client' | 'upstream' | null;
+  disconnected_at: number | null;
   first_chunk_latency_ms: number | null;
   first_token_latency_ms: number | null;
   duration_ms: number | null;
   generation_duration_ms: number | null;
+  disconnect_latency_ms: number | null;
 }
 
 export interface ConsoleRequestSnapshotInput {
@@ -149,6 +154,8 @@ interface ConsoleRequestRow {
   first_chunk_at: number | string | null;
   first_token_at: number | string | null;
   completed_at: number | string | null;
+  disconnect_source: string | null;
+  disconnected_at: number | string | null;
   has_streaming_content: number | string;
   response_model: string | null;
   stop_reason: string | null;
@@ -275,6 +282,8 @@ type ConsoleRequestListRow = Pick<ConsoleRequestRow,
   | 'first_chunk_at'
   | 'first_token_at'
   | 'completed_at'
+  | 'disconnect_source'
+  | 'disconnected_at'
   | 'has_streaming_content'
   | 'response_model'
   | 'stop_reason'
@@ -1259,6 +1268,8 @@ function toCamelCaseRow(row: typeof consoleRequests.$inferSelect): ConsoleReques
     first_chunk_at: row.firstChunkAt,
     first_token_at: row.firstTokenAt,
     completed_at: row.completedAt,
+    disconnect_source: row.disconnectSource,
+    disconnected_at: row.disconnectedAt,
     has_streaming_content: row.hasStreamingContent,
     response_model: row.responseModel,
     stop_reason: row.stopReason,
@@ -1299,22 +1310,29 @@ function roundNullableNumber(value: number | null | undefined): number | null {
   return Math.round(normalized * 10) / 10;
 }
 
-function toTiming(row: Pick<ConsoleRequestRow, 'created_at' | 'response_body_bytes' | 'first_chunk_at' | 'first_token_at' | 'completed_at' | 'has_streaming_content'>): ResponseTimingForConsole {
+function toTiming(row: Pick<ConsoleRequestRow, 'created_at' | 'response_body_bytes' | 'first_chunk_at' | 'first_token_at' | 'completed_at' | 'disconnect_source' | 'disconnected_at' | 'has_streaming_content'>): ResponseTimingForConsole {
   const createdAt = normalizeNumber(row.created_at);
   const firstChunkAt = normalizeNullableNumber(row.first_chunk_at);
   const firstTokenAt = normalizeNullableNumber(row.first_token_at);
   const completedAt = normalizeNullableNumber(row.completed_at);
+  const disconnectedAt = normalizeNullableNumber(row.disconnected_at);
+  const disconnectSource = row.disconnect_source === 'client' || row.disconnect_source === 'upstream'
+    ? row.disconnect_source
+    : null;
 
   return {
     response_body_bytes: normalizeNumber(row.response_body_bytes),
     first_chunk_at: firstChunkAt,
     first_token_at: firstTokenAt,
     completed_at: completedAt,
+    disconnect_source: disconnectSource,
+    disconnected_at: disconnectedAt,
     has_streaming_content: normalizeNumber(row.has_streaming_content) > 0,
     first_chunk_latency_ms: firstChunkAt == null ? null : Math.max(0, firstChunkAt - createdAt),
     first_token_latency_ms: firstTokenAt == null ? null : Math.max(0, firstTokenAt - createdAt),
     duration_ms: completedAt == null ? null : Math.max(0, completedAt - createdAt),
     generation_duration_ms: completedAt == null || firstTokenAt == null ? null : Math.max(0, completedAt - firstTokenAt),
+    disconnect_latency_ms: disconnectedAt == null ? null : Math.max(0, disconnectedAt - createdAt),
   };
 }
 
@@ -1437,11 +1455,14 @@ function mapListRow(
       first_chunk_at: initialCompletedAt,
       first_token_at: null,
       completed_at: initialCompletedAt,
+      disconnect_source: null,
+      disconnected_at: null,
       has_streaming_content: false,
       first_chunk_latency_ms: initialCompletedAt == null ? null : Math.max(0, initialCompletedAt - createdAt),
       first_token_latency_ms: null,
       duration_ms: initialCompletedAt == null ? null : Math.max(0, initialCompletedAt - createdAt),
       generation_duration_ms: null,
+      disconnect_latency_ms: null,
     }
     : toTiming(row);
 
@@ -1775,6 +1796,8 @@ export async function saveConsoleResponse(record: ConsoleResponseSnapshotInput):
         firstChunkAt: timing.first_chunk_at ?? null,
         firstTokenAt: timing.first_token_at ?? null,
         completedAt: timing.completed_at ?? null,
+        disconnectSource: timing.disconnect_source ?? null,
+        disconnectedAt: timing.disconnected_at ?? null,
         hasStreamingContent: timing.has_streaming_content ? 1 : 0,
         responseModel: record.response_usage.model,
         stopReason: record.response_usage.stop_reason,
@@ -1872,6 +1895,8 @@ export async function listConsoleRequests(
     first_chunk_at: consoleRequests.firstChunkAt,
     first_token_at: consoleRequests.firstTokenAt,
     completed_at: consoleRequests.completedAt,
+    disconnect_source: consoleRequests.disconnectSource,
+    disconnected_at: consoleRequests.disconnectedAt,
     has_streaming_content: consoleRequests.hasStreamingContent,
     response_model: consoleRequests.responseModel,
     stop_reason: consoleRequests.stopReason,

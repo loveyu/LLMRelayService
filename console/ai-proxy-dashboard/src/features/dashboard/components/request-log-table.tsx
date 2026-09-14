@@ -41,6 +41,15 @@ function getRequestCacheReadTokens(item: ConsoleRequestListItem): number {
     : getNumericUsageValue(item.response_usage?.cache_read_input_tokens)
 }
 
+function getDisconnectLabel(
+  source: ConsoleRequestListItem["response_timing"]["disconnect_source"],
+  t: (key: string) => string,
+): string | null {
+  if (source === "client") return t("logTable.clientDisconnected")
+  if (source === "upstream") return t("logTable.upstreamDisconnected")
+  return null
+}
+
 function calculateRequestCacheHitRate(item: ConsoleRequestListItem): number | undefined {
   const usage = item.response_usage
   const cacheReadTokens = getRequestCacheReadTokens(item)
@@ -140,6 +149,7 @@ function RequestLogMobileCard({
   const inputTokens = item.response_usage?.uncached_input_tokens ?? item.response_usage?.input_tokens ?? 0
   const outputTokens = item.response_usage?.output_tokens ?? item.response_usage?.total_output_tokens ?? 0
   const source = item.client_label ?? item.api_key_name
+  const disconnectLabel = getDisconnectLabel(timing.disconnect_source, t)
 
   return (
     <div
@@ -165,7 +175,7 @@ function RequestLogMobileCard({
           className="inline-block shrink-0 rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold"
           style={{ background: st.bg, color: st.fg }}
         >
-          {getHttpStatusLabel(item.response_status)}
+          {disconnectLabel ?? getHttpStatusLabel(item.response_status)}
         </span>
         <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
           {formatTime(item.created_at)}
@@ -183,6 +193,14 @@ function RequestLogMobileCard({
         <span className="text-foreground/90">{shortText(item.request_model, 28)}</span>
         {source ? <span className="text-muted-foreground/80"> · {source}</span> : null}
       </div>
+      {disconnectLabel ? (
+        <div className="mt-1 text-[11px] text-destructive">
+          {t("logTable.disconnectSummary", {
+            duration: formatDuration(timing.disconnect_latency_ms),
+            time: formatTime(timing.disconnected_at),
+          })}
+        </div>
+      ) : null}
 
       {/* Row 3: stat strip */}
       <div className="mt-2 grid grid-cols-4 gap-1.5">
@@ -267,7 +285,7 @@ export function RequestLogTable({
         {/* Header row — desktop only; mobile cards have no column header */}
         {!isMobile && (
           <div
-            className="grid shrink-0 grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border px-3 py-2 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground sm:grid-cols-[140px_156px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
+            className="grid shrink-0 grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border px-3 py-2 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground sm:grid-cols-[140px_156px_minmax(0,1fr)_84px_72px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
           >
             <span>
               <SortButton
@@ -287,7 +305,7 @@ export function RequestLogTable({
                 onClick={() => toggleSort("response_status")}
               />
             </span>
-            <span className="hidden sm:block">{t("logTable.firstLabel")}</span>
+            <span className="hidden sm:block">{t("logTable.firstOrElapsedLabel")}</span>
             <span>
               <SortButton
                 label={t("logTable.colTokens")}
@@ -345,6 +363,7 @@ export function RequestLogTable({
                   const outputTokens = item.response_usage?.output_tokens ?? item.response_usage?.total_output_tokens ?? 0
                   const st = statusStyle(item.response_status)
                   const source = item.client_label ?? item.api_key_name
+                  const disconnectLabel = getDisconnectLabel(timing.disconnect_source, t)
 
                   return (
                     <div
@@ -352,7 +371,7 @@ export function RequestLogTable({
                       onClick={() => onSelect(item.request_id)}
                       onMouseEnter={() => setHoveredId(item.request_id)}
                       onMouseLeave={() => setHoveredId(null)}
-                      className="grid cursor-pointer grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border/50 border-l-[3px] px-3 py-2.5 text-xs transition-colors sm:grid-cols-[140px_156px_minmax(0,1fr)_50px_62px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
+                      className="grid cursor-pointer grid-cols-[52px_minmax(0,1fr)_48px_64px] items-center gap-1.5 border-b border-border/50 border-l-[3px] px-3 py-2.5 text-xs transition-colors sm:grid-cols-[140px_156px_minmax(0,1fr)_84px_72px_78px_50px_64px] sm:gap-2 sm:px-6 sm:py-3"
                       style={{
                         borderLeftColor: isSelected ? "var(--primary)" : isHovered ? "var(--accent-foreground)" : "transparent",
                         background: isSelected ? "var(--accent)" : isHovered ? "var(--accent/50)" : "transparent",
@@ -395,13 +414,17 @@ export function RequestLogTable({
                           style={{ background: st.bg, color: st.fg }}
                           title={`${item.response_status ?? "--"} ${item.response_status_text ?? ""}`}
                         >
-                          {getHttpStatusLabel(item.response_status)}
+                          {disconnectLabel ?? getHttpStatusLabel(item.response_status)}
                         </span>
                       </span>
 
                       {/* 首Token */}
                       <span className="hidden font-mono text-[11.5px] text-foreground sm:block">
-                        {formatDuration(timing.first_token_latency_ms)}
+                        {formatDuration(
+                          disconnectLabel
+                            ? timing.disconnect_latency_ms
+                            : timing.first_token_latency_ms,
+                        )}
                       </span>
 
                       {/* Tokens: 入/出 */}
@@ -516,13 +539,14 @@ export function RequestLogTable({
                 const timing = item.response_timing ?? {}
                 const isSelected = item.request_id === selectedId
                 const st = statusStyle(item.response_status)
+                const disconnectLabel = getDisconnectLabel(timing.disconnect_source, t)
                 return (
                   <div
                     key={item.request_id}
                     onClick={() => onSelect(item.request_id)}
                     className="grid cursor-pointer items-center gap-2 border-b border-border/50 border-l-[3px] px-4 py-3 text-xs transition-colors hover:bg-accent/50"
                     style={{
-                      gridTemplateColumns: "72px 1fr 110px 110px 70px 90px 70px",
+                      gridTemplateColumns: "72px 1fr 110px 110px 96px 90px 70px",
                       borderLeftColor: isSelected ? "var(--primary)" : "transparent",
                       background: isSelected ? "var(--accent)" : undefined,
                     }}
@@ -547,7 +571,7 @@ export function RequestLogTable({
                         className="inline-block rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold"
                         style={{ background: st.bg, color: st.fg }}
                       >
-                        {getHttpStatusLabel(item.response_status)}
+                        {disconnectLabel ?? getHttpStatusLabel(item.response_status)}
                       </span>
                     </span>
                     <span className="font-mono text-[11px] text-muted-foreground">

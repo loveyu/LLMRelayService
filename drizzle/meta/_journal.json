@@ -92,6 +92,13 @@
       "when": 1789031532363,
       "tag": "0012_complete_gambit",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789375995406,
+      "tag": "0013_majestic_kitty_pryde",
+      "breakpoints": true
     }
   ]
 }

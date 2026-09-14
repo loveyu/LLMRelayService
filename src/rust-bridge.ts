@@ -141,6 +141,8 @@ interface RustResponseLog {
   cacheReadInputTokens: number | null;
   cachedInputTokens: number | null;
   responsePayload: string | null;
+  disconnectSource?: 'client' | 'upstream' | null;
+  disconnectedAt?: number | null;
 }
 
 // ── Frame codec (mirrors Rust FrameCodec) ──────────────────────────────────
