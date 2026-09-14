@@ -926,6 +926,7 @@ export default {
     toolResult: "Tool result",
     toolResultError: "Tool error",
     image: "Image",
+    imageLoadFailed: "Failed to load image",
     mdRendered: "Rendered",
     mdSource: "Markdown source",
     mdMenu: "Message menu",

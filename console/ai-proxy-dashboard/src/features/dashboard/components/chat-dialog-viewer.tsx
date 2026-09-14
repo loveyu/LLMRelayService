@@ -35,8 +35,47 @@ export type ContentBlock = {
   content?: string | Array<{ type: string; text?: string }>
   tool_use_id?: string
   is_error?: boolean
-  image_url?: { url: string }
+  image_url?: string | { url?: string }
   source?: unknown
+}
+
+type ImageSource = {
+  type?: string
+  media_type?: string
+  data?: string
+  url?: string
+}
+
+// 兼容 OpenAI Chat Completions 的 image_url.url、Responses API 的字符串型
+// image_url，以及 Anthropic 的 source(base64/url) 图片块。
+function resolveContentBlockImageSrc(block: ContentBlock): string | null {
+  if (typeof block.image_url === "string" && block.image_url.trim()) {
+    return block.image_url.trim()
+  }
+  if (
+    block.image_url &&
+    typeof block.image_url === "object" &&
+    typeof block.image_url.url === "string" &&
+    block.image_url.url.trim()
+  ) {
+    return block.image_url.url.trim()
+  }
+
+  if (!block.source || typeof block.source !== "object") return null
+  const source = block.source as ImageSource
+  if (typeof source.url === "string" && source.url.trim()) {
+    return source.url.trim()
+  }
+  if (
+    source.type === "base64" &&
+    typeof source.media_type === "string" &&
+    /^image\/[a-z0-9.+-]+$/i.test(source.media_type) &&
+    typeof source.data === "string" &&
+    source.data.length > 0
+  ) {
+    return `data:${source.media_type};base64,${source.data}`
+  }
+  return null
 }
 
 export function extractMessageText(content: unknown): string {
@@ -48,7 +87,11 @@ export function extractMessageText(content: unknown): string {
       const part = p as Record<string, unknown>
       if (part.type === "text" && typeof part.text === "string") {
         parts.push(part.text)
-      } else if (part.type === "image_url" || part.type === "image") {
+      } else if (
+        part.type === "image_url" ||
+        part.type === "input_image" ||
+        part.type === "image"
+      ) {
         parts.push("[图片]")
       }
     }
@@ -371,13 +414,38 @@ function ToolResultBlock({
   )
 }
 
+function ImageBlock({ block }: { block: ContentBlock }) {
+  const { t } = useTranslation()
+  const [loadFailed, setLoadFailed] = useState(false)
+  const src = resolveContentBlockImageSrc(block)
+
+  if (!src || loadFailed) {
+    return (
+      <div className="text-xs italic text-muted-foreground">
+        [{loadFailed ? t("payload.imageLoadFailed") : t("payload.image")}]
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={src}
+      alt={t("payload.image")}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setLoadFailed(true)}
+      className="block max-h-[32rem] w-auto max-w-full border border-border/60 bg-background object-contain"
+    />
+  )
+}
+
 function renderMessageBlocks(
   blocks: ContentBlock[],
   isUser: boolean,
   isAssistant: boolean,
   isSystem: boolean,
   isUnknown: boolean,
-  t: (key: string) => string,
 ) {
   return blocks.map((block, i) => {
     const key = `${block.type}-${i}`
@@ -420,14 +488,8 @@ function renderMessageBlocks(
         )
       case "image":
       case "image_url":
-        return (
-          <div
-            key={key}
-            className="text-xs italic text-muted-foreground"
-          >
-            [{t("payload.image")}]
-          </div>
-        )
+      case "input_image":
+        return <ImageBlock key={key} block={block} />
       default:
         return (
           <div key={key} className="text-xs text-muted-foreground">
@@ -559,7 +621,6 @@ export function ChatDialogViewer({ messages }: { messages: ChatMessage[] }) {
                     isAssistant,
                     isSystem,
                     isUnknown,
-                    t,
                   )
                 ) : (
                   <div

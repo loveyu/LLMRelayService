@@ -35,6 +35,8 @@ type ResponsesPart = {
   type?: string
   text?: string
   refusal?: string
+  image_url?: string | { url?: string }
+  source?: unknown
 }
 
 // Responses API input 数组的单个条目（只列归一化用到的字段）。
@@ -110,7 +112,9 @@ function normalizeResponsesContent(content: unknown): ContentBlock[] | string {
       } else if (p.type === "refusal" && typeof p.refusal === "string") {
         blocks.push({ type: "text", text: p.refusal })
       } else if (p.type === "image_url" || p.type === "input_image" || p.type === "image") {
-        blocks.push({ type: "image" })
+        // Responses API 常用字符串型 image_url，Chat Completions 则常用
+        // { url } 对象；保留原始图片来源交给统一对话渲染器展示。
+        blocks.push({ type: "image", image_url: p.image_url, source: p.source })
       } else {
         // 未知 part：保留 JSON 文本，避免静默丢数据
         blocks.push({ type: "text", text: JSON.stringify(part) })

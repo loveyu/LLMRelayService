@@ -926,6 +926,7 @@ export default {
     toolResult: "工具结果",
     toolResultError: "工具错误",
     image: "图片",
+    imageLoadFailed: "图片加载失败",
     mdRendered: "渲染",
     mdSource: "Markdown 源码",
     mdMenu: "消息菜单",
