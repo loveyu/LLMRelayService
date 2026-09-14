@@ -374,10 +374,6 @@ pub async fn proxy_handler(
 
         info!("Proxying {} {} → {} ({})", method, pathname, route.target_url, route.channel_name,);
 
-        let t_send = Instant::now();
-        let upstream_result = tokio::time::timeout(timeout_dur, upstream_req.send()).await;
-        let t_ttfb = t_send.elapsed();
-
         // Failover perspective for this attempt (matches TS `index.ts`):
         // a fallback route (attempt_index > 0) records the initial route as failover_from.
         let is_fallback = attempt_index > 0;
@@ -391,7 +387,11 @@ pub async fn proxy_handler(
         };
         let request_model_for_log = route.resolved_model.as_deref().unwrap_or(&model);
 
-        // Fire-and-forget: send request log to TS via IPC
+        // Fire-and-forget: persist the request before waiting for the upstream response.
+        // Axum drops the handler future when the client disconnects. If a non-streaming
+        // upstream has not produced response headers yet, logging after `send().await`
+        // would therefore lose the request entirely (for example, a client that cancels
+        // after 120s while the upstream only responds after 300s).
         send_request_log(
             &state,
             &request_id,
@@ -417,6 +417,10 @@ pub async fn proxy_handler(
             original_request_model,
             retry_count,
         );
+
+        let t_send = Instant::now();
+        let upstream_result = tokio::time::timeout(timeout_dur, upstream_req.send()).await;
+        let t_ttfb = t_send.elapsed();
 
         match upstream_result {
             Ok(Ok(upstream_resp)) => {
