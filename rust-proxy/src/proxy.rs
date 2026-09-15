@@ -3,6 +3,7 @@ use crate::auth;
 use crate::circuit_breaker::{self, Admission};
 use crate::failover::{self, FailoverTrigger};
 use crate::ipc::RustToTsMessage;
+use crate::rate_limit_cooldown;
 use crate::responses::{self, ChatSseToResponsesSse};
 use crate::routing::{self, RouteResult};
 use crate::sse_observer::{ObservingSseStream, SseObserverHandle};
@@ -266,6 +267,8 @@ async fn proxy_handler_inner(
     let mut initial_response_status: Option<u16> = None;
     let mut initial_response_status_text: Option<String> = None;
     let mut initial_completed_at: Option<u64> = None;
+    let rate_limit_cooldown_enabled =
+        failover_policy.enabled && failover_policy.retry_on_status_codes.contains(&429);
 
     loop {
         if attempt_index >= active_routes.len() {
@@ -287,6 +290,7 @@ async fn proxy_handler_inner(
 
         let route = active_routes[attempt_index].clone();
         let is_retry = attempt_index == 0 && retry_count > 0;
+        let route_model = rate_limit_cooldown::route_model(route.resolved_model.as_deref(), &model);
 
         let t_total = Instant::now();
 
@@ -354,6 +358,95 @@ async fn proxy_handler_inner(
                 b
             }
         };
+
+        if let Some(remaining) = state.rate_limit_cooldowns.remaining(
+            &route.channel_name,
+            route_model,
+            rate_limit_cooldown_enabled,
+        ) {
+            let retry_after_seconds = rate_limit_cooldown::retry_after_seconds(remaining);
+            let label = describe_route(&route);
+            if !failed_route_chain.contains(&label) {
+                failed_route_chain.push(label);
+            }
+            failover_reason = Some("rate_limit_cooldown".to_string());
+            if initial_response_status.is_none() {
+                initial_response_status = Some(429);
+                initial_response_status_text = Some("Too Many Requests".to_string());
+                initial_completed_at = Some(
+                    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+                        as u64,
+                );
+            }
+
+            let is_fallback = attempt_index > 0;
+            send_request_log(
+                &state,
+                &request_id,
+                created_at,
+                &method,
+                &uri,
+                pathname,
+                &route,
+                route_model,
+                &headers,
+                &fwd_headers,
+                &request_body,
+                &body,
+                auth_result.api_key_id.clone(),
+                auth_result.api_key_name.clone(),
+                if is_fallback { Some(describe_route(&initial_route)) } else { None },
+                failed_route_chain.clone(),
+                failover_reason.clone(),
+                initial_response_status,
+                initial_response_status_text.clone(),
+                initial_completed_at,
+                if is_fallback { Some(initial_route.channel_name.clone()) } else { None },
+                if is_fallback {
+                    Some(initial_route.resolved_model.clone().unwrap_or_else(|| model.clone()))
+                } else {
+                    None
+                },
+                retry_count,
+            );
+            disconnect_guard.arm();
+            warn!(
+                "Rate-limit cooldown active for {} ({route_model}), skipping for {retry_after_seconds}s",
+                route.channel_name
+            );
+            if advance_to_next_route(
+                &mut active_routes,
+                &mut attempt_index,
+                &failover_policy,
+                &model,
+                &state,
+                pathname,
+                search,
+                request_type.clone(),
+            ) {
+                retry_count = 0;
+                continue;
+            }
+
+            let response = build_rate_limit_cooldown_response(&route, remaining);
+            let response_body = format!(
+                "渠道 {} 的模型 {} 正在 429 冷却中，约 {retry_after_seconds} 秒后重试",
+                route.channel_name, route_model
+            );
+            emit_terminal_response_log(
+                &state,
+                &request_id,
+                created_at,
+                429,
+                "RATE_LIMIT_COOLDOWN",
+                serde_json::json!({ "retry-after": retry_after_seconds.to_string() }),
+                Some(response_body),
+                0,
+                route.resolved_model.clone(),
+                None,
+            );
+            return Ok(response);
+        }
 
         let circuit_key = circuit_breaker::route_key(&route.channel_name, &target_url);
         let circuit_enabled = failover_policy.enabled
@@ -511,7 +604,7 @@ async fn proxy_handler_inner(
         let t_ttfb = t_send.elapsed();
 
         match upstream_result {
-            Ok(Ok(upstream_resp)) => {
+            Ok(Ok(mut upstream_resp)) => {
                 state.circuit_breaker.record_connect_success(&circuit_key).await;
                 let status = upstream_resp.status().as_u16();
                 if initial_response_status.is_none() {
@@ -524,6 +617,7 @@ async fn proxy_handler_inner(
                     );
                 }
                 if (200..400).contains(&status) {
+                    state.rate_limit_cooldowns.record_success(&route.channel_name, route_model);
                     let is_sse_val = upstream_resp
                         .headers()
                         .get("content-type")
@@ -684,6 +778,32 @@ async fn proxy_handler_inner(
                     return Ok(result.response);
                 }
 
+                if status == 429 {
+                    let retry_after = upstream_resp
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|value| value.to_str().ok());
+                    let cooldown = state.rate_limit_cooldowns.record_429(
+                        &route.channel_name,
+                        route_model,
+                        retry_after,
+                        rate_limit_cooldown_enabled,
+                    );
+                    if !cooldown.is_zero() {
+                        let retry_after_seconds =
+                            rate_limit_cooldown::retry_after_seconds(cooldown);
+                        if let Ok(value) =
+                            reqwest::header::HeaderValue::from_str(&retry_after_seconds.to_string())
+                        {
+                            upstream_resp.headers_mut().insert("retry-after", value);
+                        }
+                        warn!(
+                            "Rate limited by {} ({route_model}); cooling down for {retry_after_seconds}s",
+                            route.channel_name
+                        );
+                    }
+                }
+
                 // TS behavior: only retry/fallback for explicitly retryable status codes.
                 // Non-retryable (e.g., 404, 401) are returned directly to the client.
                 let trigger = FailoverTrigger::Status(status);
@@ -697,7 +817,9 @@ async fn proxy_handler_inner(
                 if failover_policy.enabled
                     && failover::should_trigger_failover(&failover_policy, &trigger)
                 {
-                    if retry_count < failover_policy.retry_attempts {
+                    if failover::should_retry_same_route(&trigger)
+                        && retry_count < failover_policy.retry_attempts
+                    {
                         retry_count += 1;
                         warn!(
                             "Status {status}, retrying same route ({retry_count}/{})",
@@ -1011,7 +1133,16 @@ fn try_add_fallbacks(
     let mut new_routes = Vec::new();
     for r in candidates {
         let key = r.channel_name.clone();
-        if !seen.contains(&key) && added < remaining_fallbacks {
+        let candidate_model = rate_limit_cooldown::route_model(r.resolved_model.as_deref(), model);
+        let cooling_down = state
+            .rate_limit_cooldowns
+            .remaining(
+                &r.channel_name,
+                candidate_model,
+                policy.enabled && policy.retry_on_status_codes.contains(&429),
+            )
+            .is_some();
+        if !cooling_down && !seen.contains(&key) && added < remaining_fallbacks {
             seen.insert(key);
             new_routes.push(r);
             added += 1;
@@ -1432,6 +1563,39 @@ fn describe_trigger(trigger: &failover::FailoverTrigger) -> String {
         failover::FailoverTrigger::Timeout => "timeout".to_string(),
         failover::FailoverTrigger::NetworkError(msg) => format!("network_error: {msg}"),
     }
+}
+
+fn build_rate_limit_cooldown_response(
+    route: &RouteResult,
+    remaining: std::time::Duration,
+) -> Response {
+    let retry_after_seconds = rate_limit_cooldown::retry_after_seconds(remaining);
+    let message = format!(
+        "渠道 {} 的模型 {} 正在限流冷却中，请稍后重试",
+        route.channel_name,
+        route.resolved_model.as_deref().unwrap_or("unknown")
+    );
+    let payload = if transform::is_anthropic(&route.upstream_type) {
+        serde_json::json!({
+            "type": "error",
+            "error": { "type": "rate_limit_error", "message": message },
+        })
+    } else {
+        serde_json::json!({
+            "error": {
+                "message": message,
+                "type": "rate_limit_error",
+                "code": "rate_limit_cooldown",
+                "param": null,
+            },
+        })
+    };
+    Response::builder()
+        .status(StatusCode::TOO_MANY_REQUESTS)
+        .header("content-type", "application/json")
+        .header("retry-after", retry_after_seconds.to_string())
+        .body(Body::from(payload.to_string()))
+        .unwrap_or_else(|_| Response::new(Body::empty()))
 }
 
 #[allow(clippy::too_many_arguments)]

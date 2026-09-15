@@ -7,6 +7,8 @@ mod ipc;
 mod logging;
 mod provider_test;
 mod proxy;
+mod rate_limit_admin;
+mod rate_limit_cooldown;
 mod responses;
 mod routing;
 mod sse_observer;
@@ -58,6 +60,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/anthropic/v1/models", get(models_handler))
         // 渠道连通性测试：本机 TS 控制台/OpenAPI 经此走 Rust 测试上游，TS 旧实现逐步废弃。
         .route("/admin/providers/{channel_name}/test", post(provider_test::test_provider_handler))
+        .route("/admin/rate-limit-cooldowns", get(rate_limit_admin::list_cooldowns_handler))
+        .route("/admin/rate-limit-cooldowns/clear", post(rate_limit_admin::clear_cooldowns_handler))
         .fallback(proxy::proxy_handler)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(max_body_bytes))
         // axum 的 body 提取器(Bytes/String/Json)另有 DefaultBodyLimit(默认仅 2MB),
@@ -78,6 +82,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     config.aliases.len(),
                     config.api_keys.len(),
                 );
+                if !config.failover.enabled || !config.failover.retry_on_status_codes.contains(&429)
+                {
+                    app_state.rate_limit_cooldowns.clear(None, None);
+                }
                 app_state.update_connect_timeout(config.timeouts.connect_timeout_ms).await;
                 let new_routing = RoutingTable::from_payload(config);
                 {

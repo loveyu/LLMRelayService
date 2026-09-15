@@ -454,3 +454,18 @@ export type GatewayFailoverPolicyPayload = GatewayFailoverPolicy & {
   }
   updatedAt: number | null
 }
+
+export type RateLimitCooldown = {
+  channel: string
+  model: string
+  consecutive429s: number
+  cooldownMs: number
+  remainingMs: number
+  expiresAt: number
+}
+
+export type RateLimitCooldownsPayload = {
+  ok: boolean
+  cooldowns: RateLimitCooldown[]
+  maxCooldownMs: number
+}

@@ -114,7 +114,7 @@ fn now_ms() -> u64 {
 
 /// 仅限本机 TS 控制台调用：要求请求携带 GATEWAY_API_KEY（x-api-key 或 Bearer）。
 /// Rust 默认绑定 127.0.0.1，加上这个共享密钥做二次校验。
-fn is_admin(headers: &HeaderMap, gateway_admin_key: &str) -> bool {
+pub(crate) fn is_admin(headers: &HeaderMap, gateway_admin_key: &str) -> bool {
     if gateway_admin_key.is_empty() {
         return false;
     }

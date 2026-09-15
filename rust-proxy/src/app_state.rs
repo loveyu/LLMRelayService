@@ -3,6 +3,7 @@ use crate::config::{
     AliasTarget, ApiKeyInfo, ConfigEntry, GatewayFailoverPolicy, GatewayTimeoutSettings,
 };
 use crate::ipc::IpcSender;
+use crate::rate_limit_cooldown::RateLimitCooldowns;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
@@ -64,6 +65,7 @@ pub struct AppState {
     pub routing: Arc<RwLock<RoutingTable>>,
     http_client: Arc<RwLock<UpstreamHttpClient>>,
     pub circuit_breaker: Arc<CircuitBreaker>,
+    pub rate_limit_cooldowns: Arc<RateLimitCooldowns>,
     pub config_synced: Arc<RwLock<bool>>,
     config_synced_notify: Arc<Notify>,
     pub gateway_admin_key: Arc<String>,
@@ -84,6 +86,7 @@ impl AppState {
                 connect_timeout_ms,
             })),
             circuit_breaker: Arc::new(CircuitBreaker::default()),
+            rate_limit_cooldowns: Arc::new(RateLimitCooldowns::default()),
             config_synced: Arc::new(RwLock::new(false)),
             config_synced_notify: Arc::new(Notify::new()),
             gateway_admin_key: Arc::new(gateway_admin_key),

@@ -21,6 +21,7 @@ import {
 } from './provider-admin';
 import { getGatewayTimeoutSettings, updateGatewayTimeoutSettings } from './gateway-timeouts';
 import { getGatewayFailoverPolicy, updateGatewayFailoverPolicy } from './gateway-failover';
+import { clearRateLimitCooldownRuntime, getRateLimitCooldowns } from './rate-limit-admin';
 
 const CONSOLE_COOKIE_NAME = 'CONSOLE_COOKIE_NAME';
 const CONSOLE_UI_DIST_DIR = resolve(import.meta.dir, '..', 'dist', 'frontend');
@@ -483,6 +484,29 @@ export function registerConsoleRoutes(app: Hono<any>): void {
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
     }
+  });
+
+  app.get('/__console/api/settings/rate-limit-cooldowns', async (c) => {
+    if (!isPasswordConfigured()) {
+      return c.json({ error: 'GATEWAY_API_KEY 未设置' }, 503);
+    }
+    if (!isAuthenticated(c)) {
+      return c.json({ error: '未授权' }, 401);
+    }
+    return c.json({ ok: true, ...await getRateLimitCooldowns() });
+  });
+
+  app.post('/__console/api/settings/rate-limit-cooldowns/clear', async (c) => {
+    if (!isPasswordConfigured()) {
+      return c.json({ error: 'GATEWAY_API_KEY 未设置' }, 503);
+    }
+    if (!isAuthenticated(c)) {
+      return c.json({ error: '未授权' }, 401);
+    }
+    const body = await c.req.json<{ channel?: string; model?: string }>()
+      .catch(() => ({} as { channel?: string; model?: string }));
+    const result = await clearRateLimitCooldownRuntime(body.channel, body.model);
+    return c.json({ ok: true, ...result });
   });
 
   app.get('/__console/api/requests/:requestId', async (c) => {

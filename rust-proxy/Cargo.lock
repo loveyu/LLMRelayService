@@ -1054,6 +1054,7 @@ dependencies = [
  "chrono-tz",
  "futures",
  "hex",
+ "httpdate",
  "regex",
  "reqwest",
  "serde",

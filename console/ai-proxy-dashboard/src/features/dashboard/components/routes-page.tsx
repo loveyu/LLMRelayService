@@ -63,16 +63,18 @@ import {
 } from "@/components/ui/tooltip"
 import {
   createModelAlias,
+  clearRateLimitCooldown,
   deleteModelAlias,
   fetchGatewayFailoverPolicy,
   fetchModelAliases,
   fetchProviders,
+  fetchRateLimitCooldowns,
   testProvider,
   toggleModelAlias,
   updateGatewayFailoverPolicy,
   updateModelAlias,
 } from "@/features/dashboard/api"
-import type { GatewayFailoverPolicyPayload, ModelAlias, ModelFallbackMode, ProviderInfo } from "@/features/dashboard/types"
+import type { GatewayFailoverPolicyPayload, ModelAlias, ModelFallbackMode, ProviderInfo, RateLimitCooldown } from "@/features/dashboard/types"
 import type { TestProviderResult } from "@/features/dashboard/api"
 import type { RouteTab } from "@/features/dashboard/hooks/use-hash-route"
 
@@ -669,6 +671,9 @@ function GlobalFailoverEditor({
   failoverError,
   failoverFeedback,
   failoverModeLabel,
+  rateLimitCooldowns,
+  clearingCooldownKey,
+  onClearCooldown,
 }: {
   failoverForm: FailoverFormState
   failoverPolicy: GatewayFailoverPolicyPayload
@@ -679,6 +684,9 @@ function GlobalFailoverEditor({
   failoverFeedback: string
   failoverModeLabel: string
   i18nLanguage: string
+  rateLimitCooldowns: RateLimitCooldown[]
+  clearingCooldownKey: string | null
+  onClearCooldown: (channel?: string, model?: string) => Promise<void>
 }) {
   const { t } = useTranslation()
   return (
@@ -812,6 +820,62 @@ function GlobalFailoverEditor({
                 onChange={(v) => setFailoverForm((c) => c ? { ...c, retryOn5xx: v } : c)}
               />
             </div>
+          </Field>
+
+          <Field>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <FieldLabel>{t("routes.rateLimitCooldownTitle")}</FieldLabel>
+                <FieldDescription>{t("routes.rateLimitCooldownHint")}</FieldDescription>
+              </div>
+              {rateLimitCooldowns.length > 0 ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={clearingCooldownKey != null}
+                  onClick={() => void onClearCooldown()}
+                >
+                  {clearingCooldownKey === "*" ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <RotateCcw data-icon="inline-start" />}
+                  {t("routes.rateLimitCooldownClearAll")}
+                </Button>
+              ) : null}
+            </div>
+            {rateLimitCooldowns.length === 0 ? (
+              <div className="border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+                {t("routes.rateLimitCooldownEmpty")}
+              </div>
+            ) : (
+              <div className="divide-y border border-border">
+                {rateLimitCooldowns.map((entry) => {
+                  const entryKey = `${entry.channel}\u0000${entry.model}`
+                  const remainingSeconds = Math.max(1, Math.ceil(entry.remainingMs / 1000))
+                  return (
+                    <div key={entryKey} className="flex items-center gap-3 px-3 py-2.5 text-xs">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-mono font-medium">{entry.channel}:{entry.model}</div>
+                        <div className="mt-1 text-muted-foreground">
+                          {t("routes.rateLimitCooldownRemaining", {
+                            seconds: remainingSeconds,
+                            count: entry.consecutive429s,
+                          })}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={clearingCooldownKey != null}
+                        onClick={() => void onClearCooldown(entry.channel, entry.model)}
+                      >
+                        {clearingCooldownKey === entryKey ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <RotateCcw data-icon="inline-start" />}
+                        {t("routes.rateLimitCooldownClear")}
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </Field>
 
           <Field>
@@ -1001,6 +1065,8 @@ export function RoutesPage({
   const [failoverFeedback, setFailoverFeedback] = useState("")
   const [loading, setLoading] = useState(false)
   const [savingFailover, setSavingFailover] = useState(false)
+  const [rateLimitCooldowns, setRateLimitCooldowns] = useState<RateLimitCooldown[]>([])
+  const [clearingCooldownKey, setClearingCooldownKey] = useState<string | null>(null)
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<ModelAlias | null>(null)
@@ -1030,15 +1096,17 @@ export function RoutesPage({
   const load = useCallback(async () => {
     try {
       setLoading(true)
-      const [aliasData, providerData, failoverData] = await Promise.all([
+      const [aliasData, providerData, failoverData, cooldownData] = await Promise.all([
         fetchModelAliases(),
         fetchProviders(),
         fetchGatewayFailoverPolicy(),
+        fetchRateLimitCooldowns(),
       ])
       setAliases(aliasData.aliases)
       setProviders(providerData.providers)
       setFailoverPolicy(failoverData)
       setFailoverForm(toFailoverForm(failoverData))
+      setRateLimitCooldowns(cooldownData.cooldowns)
       setError("")
       setFailoverError("")
     } catch (err) {
@@ -1053,6 +1121,31 @@ export function RoutesPage({
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void fetchRateLimitCooldowns()
+        .then((data) => setRateLimitCooldowns(data.cooldowns))
+        .catch(() => undefined)
+    }, 5_000)
+    return () => window.clearInterval(interval)
+  }, [])
+
+  const handleClearCooldown = async (channel?: string, model?: string) => {
+    const entryKey = channel && model ? `${channel}\u0000${model}` : "*"
+    try {
+      setClearingCooldownKey(entryKey)
+      await clearRateLimitCooldown(channel, model)
+      const data = await fetchRateLimitCooldowns()
+      setRateLimitCooldowns(data.cooldowns)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (handleUnauth(message)) return
+      setFailoverError(message)
+    } finally {
+      setClearingCooldownKey(null)
+    }
+  }
 
   const openCreate = () => {
     setEditTarget(null)
@@ -1445,6 +1538,9 @@ export function RoutesPage({
                     failoverFeedback={failoverFeedback}
                     failoverModeLabel={failoverModeLabel}
                     i18nLanguage={i18n.language}
+                    rateLimitCooldowns={rateLimitCooldowns}
+                    clearingCooldownKey={clearingCooldownKey}
+                    onClearCooldown={handleClearCooldown}
                   />
                 ) : (
                   <CustomFallbackEditor

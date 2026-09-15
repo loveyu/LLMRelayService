@@ -140,6 +140,8 @@ Enable/disable body:
 - `PATCH /settings/timeouts`
 - `GET /settings/failover`
 - `PATCH /settings/failover`
+- `GET /settings/rate-limit-cooldowns`
+- `POST /settings/rate-limit-cooldowns/clear`
 
 Timeout update body (all fields are milliseconds and optional):
 
@@ -179,6 +181,20 @@ settings:
 TCP/DNS/TLS connection failures skip same-route retries and go directly to fallback.
 When the circuit breaker reaches its threshold, subsequent requests skip that channel
 during the cooldown; one half-open probe is admitted afterward.
+
+When HTTP 429 is enabled as a failover trigger, the affected channel and resolved model
+enter an in-memory cooldown. `Retry-After` takes priority and is capped at five minutes;
+without it, the exponential bases are 30, 60, 120, 240, and 300 seconds with ±20% jitter.
+HTTP 429 skips retries on the same route and goes directly to fallback.
+
+List active cooldowns with `GET /settings/rate-limit-cooldowns`. Clear one entry or all
+entries with:
+
+```json
+{ "channel": "my-openai", "model": "gpt-4o" }
+```
+
+Both fields are optional; omitting both clears every active/counter entry in this process.
 
 ## Gateway Forwarding
 

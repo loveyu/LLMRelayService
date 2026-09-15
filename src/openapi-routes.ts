@@ -49,6 +49,7 @@ import {
 } from './provider-admin';
 import { getGatewayTimeoutSettings, updateGatewayTimeoutSettings } from './gateway-timeouts';
 import { getGatewayFailoverPolicy, updateGatewayFailoverPolicy } from './gateway-failover';
+import { clearRateLimitCooldownRuntime, getRateLimitCooldowns } from './rate-limit-admin';
 
 function getGatewayKey(): string {
   return process.env.GATEWAY_API_KEY ?? '';
@@ -330,6 +331,16 @@ export function registerOpenApiRoutes(app: Hono<any>): void {
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
     }
+  });
+
+  v1.get('/settings/rate-limit-cooldowns', async (c) => {
+    return c.json({ data: await getRateLimitCooldowns() });
+  });
+
+  v1.post('/settings/rate-limit-cooldowns/clear', async (c) => {
+    const body = await c.req.json<{ channel?: string; model?: string }>()
+      .catch(() => ({} as { channel?: string; model?: string }));
+    return c.json({ data: await clearRateLimitCooldownRuntime(body.channel, body.model) });
   });
 
   // ── Requests ─────────────────────────────────────────────────────────────

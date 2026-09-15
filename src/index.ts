@@ -23,6 +23,7 @@ import { initializeTokenEstimator } from './token-estimator';
 import { applyCorsHeaders, createCorsPreflightResponse, withCorsHeaders } from './cors';
 import { getGatewayTimeoutSettings, selectUpstreamFirstByteTimeoutMs } from './gateway-timeouts';
 import { describeFailoverTrigger, getCustomModelFallbackModels, getGatewayFailoverPolicy, shouldTriggerFailover, type FailoverTrigger, type GatewayFailoverPolicy } from './gateway-failover';
+import { clearRateLimitCooldown, getRateLimitCooldownRemainingMs, recordRateLimit429 } from './rate-limit-cooldown';
 import {
   convertResponsesRequestToChatCompletions,
   createResponsesChatCompatErrorResponse,
@@ -73,6 +74,22 @@ function buildGatewayErrorResponse(
     error: message,
     ...(details ? { details } : {}),
   }, { status });
+}
+
+function buildRateLimitCooldownResponse(
+  upstreamType: UpstreamType,
+  channelName: string,
+  model: string,
+  remainingMs: number,
+): Response {
+  const retryAfterSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+  const response = buildGatewayErrorResponse(
+    upstreamType,
+    429,
+    `渠道 '${channelName}' 的模型 '${model}' 正在限流冷却中，请稍后重试`,
+  );
+  response.headers.set('Retry-After', String(retryAfterSeconds));
+  return response;
 }
 
 function readGatewayCredentials(headers: Headers): GatewayCredentialCandidate[] {
@@ -478,6 +495,7 @@ async function handleProxyRequest(c: any): Promise<Response> {
     : resolveRoutesByModel(lookupPathname, upstreamSearch, requestedModel, typeForced?.type);
   const timeoutSettings = await getGatewayTimeoutSettings();
   const failoverPolicy = await getGatewayFailoverPolicy();
+  const rateLimitCooldownEnabled = failoverPolicy.enabled && failoverPolicy.retryOnStatusCodes.includes(429);
   const customFallbackModels = explicitRoute ? [] : getCustomModelFallbackModels(failoverPolicy, requestedModel);
   const virtualRouteFallbackCandidates = explicitRoute
     ? []
@@ -521,7 +539,13 @@ async function handleProxyRequest(c: any): Promise<Response> {
     const queuedRouteKeys = new Set(activeRoutes.map((route) => routeKey(route)));
     return routes.filter((candidate) => {
       const candidateKey = routeKey(candidate);
-      return !attemptedRouteKeys.has(candidateKey) && !queuedRouteKeys.has(candidateKey);
+      const candidateModel = candidate.resolvedModel ?? requestedModel;
+      const coolingDown = getRateLimitCooldownRemainingMs(
+        candidate.channelName,
+        candidateModel,
+        rateLimitCooldownEnabled,
+      ) != null;
+      return !coolingDown && !attemptedRouteKeys.has(candidateKey) && !queuedRouteKeys.has(candidateKey);
     });
   };
 
@@ -760,7 +784,7 @@ async function handleProxyRequest(c: any): Promise<Response> {
 
   const shouldContinueAfterFailure = (policy: GatewayFailoverPolicy, trigger: FailoverTrigger, attemptIndex: number): boolean => {
     if (!shouldTriggerFailover(policy, trigger)) return false;
-    if (attemptIndex < policy.retryAttempts) return true;
+    if (!(trigger.kind === 'status' && trigger.status === 429) && attemptIndex < policy.retryAttempts) return true;
     return fallbackAttempts < policy.maxFallbackAttempts && buildFallbackRoutes().length > 0;
   };
 
@@ -813,6 +837,70 @@ async function handleProxyRequest(c: any): Promise<Response> {
         requestBody: rawPayloadForLog ?? undefined,
       });
       addPerfPhase(requestPerfPhases, 'finalize_response_ms', elapsedPerfMs(finalizeStart));
+      emitRequestPerf(response.status);
+      return response;
+    }
+
+    const routeModel = route.resolvedModel ?? requestedModel;
+    const cooldownRemainingMs = getRateLimitCooldownRemainingMs(
+      route.channelName,
+      routeModel,
+      rateLimitCooldownEnabled,
+    );
+    if (cooldownRemainingMs != null) {
+      lastFailureTrigger = { kind: 'status', status: 429 };
+      failoverReason = 'rate_limit_cooldown';
+      if (!failedRouteChain.includes(describeRoute(route))) {
+        failedRouteChain.push(describeRoute(route));
+      }
+      initialResponseStatus ??= 429;
+      initialResponseStatusText ??= 'Too Many Requests';
+      initialCompletedAt ??= Date.now();
+      saveRequestLogForAttempt({
+        route,
+        upstreamTargetUrl: attempt.upstreamTargetUrl,
+        requestModel: attempt.requestModel,
+        forwardedPayloadForStore: attempt.forwardedPayloadForStore,
+        forwardedSummaryForLog: attempt.forwardedSummaryForLog,
+        headersSummary: attempt.headersSummary,
+        failoverFrom: isFallbackRoute(route) ? describeRoute(initialRoute) : null,
+        failoverChain: [...failedRouteChain],
+        failoverReason,
+        retryAttempt: retryIndexForRoute,
+      });
+      console.warn('[REQ_RATE_LIMIT_COOLDOWN]', {
+        request_id: requestId,
+        route: describeRoute(route),
+        remaining_ms: cooldownRemainingMs,
+      });
+
+      const fallbackRoutes = buildFallbackRoutes();
+      if (fallbackRoutes.length > 0 && fallbackAttempts < failoverPolicy.maxFallbackAttempts) {
+        const appendedRoutes = fallbackRoutes.slice(0, failoverPolicy.maxFallbackAttempts - fallbackAttempts);
+        activeRoutes = activeRoutes.concat(appendedRoutes);
+        fallbackAttempts += appendedRoutes.length;
+        activeRouteIndex += 1;
+        retryIndexForRoute = 0;
+        continue;
+      }
+
+      const cooldownResponse = buildRateLimitCooldownResponse(
+        route.type,
+        route.channelName,
+        routeModel,
+        cooldownRemainingMs,
+      );
+      const response = finalizeProxyResponse({
+        response: cooldownResponse,
+        requestId,
+        path: url.pathname + url.search,
+        shouldLog: c.req.method === 'POST',
+        createdAt: requestCreatedAt,
+        createdAtPerf: requestCreatedPerfAt,
+        upstreamType: route.type,
+        truncatePayloadForLog,
+        requestBody: attempt.forwardedPayload ?? undefined,
+      });
       emitRequestPerf(response.status);
       return response;
     }
@@ -929,6 +1017,25 @@ async function handleProxyRequest(c: any): Promise<Response> {
       initialResponseStatusText = upstreamResponse.statusText;
       initialCompletedAt = Date.now();
     }
+    if (upstreamResponse.status >= 200 && upstreamResponse.status < 400) {
+      clearRateLimitCooldown(route.channelName, routeModel);
+    } else if (upstreamResponse.status === 429) {
+      const cooldownMs = recordRateLimit429(
+        route.channelName,
+        routeModel,
+        upstreamResponse.headers.get('Retry-After'),
+        rateLimitCooldownEnabled,
+      );
+      if (cooldownMs > 0) {
+        const responseHeaders = new Headers(upstreamResponse.headers);
+        responseHeaders.set('Retry-After', String(Math.max(1, Math.ceil(cooldownMs / 1000))));
+        upstreamResponse = new Response(upstreamResponse.body, {
+          status: upstreamResponse.status,
+          statusText: upstreamResponse.statusText,
+          headers: responseHeaders,
+        });
+      }
+    }
     const statusTrigger: FailoverTrigger = { kind: 'status', status: upstreamResponse.status };
     if (shouldContinueAfterFailure(failoverPolicy, statusTrigger, retryIndexForRoute)) {
       lastFailureTrigger = statusTrigger;
@@ -944,7 +1051,7 @@ async function handleProxyRequest(c: any): Promise<Response> {
       if (!failedRouteChain.includes(describeRoute(route))) {
         failedRouteChain.push(describeRoute(route));
       }
-      if (retryIndexForRoute < failoverPolicy.retryAttempts) {
+      if (upstreamResponse.status !== 429 && retryIndexForRoute < failoverPolicy.retryAttempts) {
         retryIndexForRoute += 1;
         continue;
       }

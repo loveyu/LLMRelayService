@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { createDbClient, type DbClient } from './db/client';
 import { gatewaySettings } from './db/schema';
+import { clearRateLimitCooldowns } from './rate-limit-cooldown';
 
 export type FailoverStatusRange = '5xx';
 export type ModelFallbackMode = 'disabled' | 'same_model' | 'any_model';
@@ -332,6 +333,9 @@ export async function updateGatewayFailoverPolicy(input: GatewayFailoverPolicyIn
 
   cachedPolicy = buildPolicyView(policy, updatedAt);
   cachedPolicyLoadedAt = updatedAt;
+  if (!policy.enabled || !policy.retryOnStatusCodes.includes(429)) {
+    clearRateLimitCooldowns();
+  }
   return cachedPolicy;
 }
 

@@ -21,6 +21,7 @@ import type {
   ProviderMutationPayload,
   UpdateModelMetadataPayload,
   RustProxyStatus,
+  RateLimitCooldownsPayload,
 } from "@/features/dashboard/types"
 
 export const DEFAULT_REQUEST_LIMIT = 50
@@ -384,6 +385,21 @@ export function updateGatewayFailoverPolicy(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  })
+}
+
+export function fetchRateLimitCooldowns(): Promise<RateLimitCooldownsPayload> {
+  return requestJson("/__console/api/settings/rate-limit-cooldowns")
+}
+
+export function clearRateLimitCooldown(
+  channel?: string,
+  model?: string,
+): Promise<{ ok: true; cleared: number }> {
+  return requestJson("/__console/api/settings/rate-limit-cooldowns/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel, model }),
   })
 }
 

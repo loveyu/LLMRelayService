@@ -46,7 +46,7 @@ pub fn should_trigger_failover(policy: &GatewayFailoverPolicy, trigger: &Failove
 /// 建连失败已经证明当前地址不可达，再试同一路由只会重复等待 connect timeout。
 /// 仍然允许进入 fallback；其他触发器保留全局 retryAttempts 行为。
 pub fn should_retry_same_route(trigger: &FailoverTrigger) -> bool {
-    !matches!(trigger, FailoverTrigger::ConnectError(_))
+    !matches!(trigger, FailoverTrigger::ConnectError(_) | FailoverTrigger::Status(429))
 }
 
 /// Get custom model fallback models for a given model from the policy.
@@ -72,5 +72,6 @@ mod tests {
         assert!(!should_retry_same_route(&trigger));
         assert!(should_retry_same_route(&FailoverTrigger::Timeout));
         assert!(should_retry_same_route(&FailoverTrigger::Status(503)));
+        assert!(!should_retry_same_route(&FailoverTrigger::Status(429)));
     }
 }
