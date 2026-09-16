@@ -321,6 +321,7 @@ export default {
     searchSource: "Search sources...",
     statusFilter: "Status Filter",
     allStatus: "All Status",
+    statusFinal: "Final Status",
     searchStatus: "Search status...",
     statusSuccess: "Success (2xx)",
     statusError: "Error (4xx/5xx)",

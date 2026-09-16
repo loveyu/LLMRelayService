@@ -54,7 +54,9 @@ export function LogsPage({
   const [routeFilter, setRouteFilter] = useState("")
   const [modelFilter, setModelFilter] = useState("")
   const [sourceTypeFilter, setSourceTypeFilter] = useState("")
-  const [statusFilter, setStatusFilter] = useState("")
+  // 状态下拉四种口径:final(默认,状态列只显示最终状态)/ all_states(显示完整
+  // 轨迹如 429→200)/ success / error(按最终状态过滤)。
+  const [statusFilter, setStatusFilter] = useState("final")
   const [cacheFilter, setCacheFilter] = useState("")
   const [timeRange, setTimeRange] = useState<LogsTimeRange>("24h")
   const [liveMode, setLiveMode] = useState(false)
@@ -121,15 +123,20 @@ export function LogsPage({
     return () => window.clearTimeout(timer)
   }, [searchQuery])
 
+  // final / all_states 只是显示口径,不过滤;success / error 才下发给后端过滤。
+  const statusDisplay = statusFilter === "all_states" ? ("all" as const) : ("final" as const)
+  const activeStatusFilter =
+    statusFilter === "success" || statusFilter === "error" ? statusFilter : undefined
+
   const filters = useMemo(() => ({
     search: debouncedSearchQuery || undefined,
     route: routeFilter || undefined,
     model: modelFilter || undefined,
     api_key_name: sourceTypeFilter || undefined,
-    status: statusFilter || undefined,
+    status: activeStatusFilter,
     cache: cacheFilter || undefined,
     range: timeRange === "all" ? undefined : timeRange,
-  }), [debouncedSearchQuery, routeFilter, modelFilter, sourceTypeFilter, statusFilter, cacheFilter, timeRange])
+  }), [debouncedSearchQuery, routeFilter, modelFilter, sourceTypeFilter, activeStatusFilter, cacheFilter, timeRange])
 
   const lastAutoRequestKeyRef = useRef("")
   useEffect(() => {
@@ -181,7 +188,7 @@ export function LogsPage({
     }))
   }, [filterOptions.clients])
 
-  const hasActiveFilters = searchQuery || routeFilter || modelFilter || sourceTypeFilter || statusFilter || cacheFilter
+  const hasActiveFilters = searchQuery || routeFilter || modelFilter || sourceTypeFilter || activeStatusFilter || cacheFilter
 
   const timeRangeOptions: { value: LogsTimeRange; label: string }[] = [
     { value: "1h", label: t("logs.timeRange1h") },
@@ -206,14 +213,15 @@ export function LogsPage({
           />
         </div>
 
-        {/* Status */}
-        <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v === "all" ? "" : v) }}>
+        {/* Status:最终状态(默认)/ 全部状态(显示初始→最终轨迹)/ 成功 / 失败 */}
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="h-9 w-auto min-w-[88px] text-xs">
-            <SelectValue placeholder={t("logs.allStatus")} />
+            <SelectValue placeholder={t("logs.statusFinal")} />
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
-              <SelectItem value="all">{t("logs.allStatus")}</SelectItem>
+              <SelectItem value="final">{t("logs.statusFinal")}</SelectItem>
+              <SelectItem value="all_states">{t("logs.allStatus")}</SelectItem>
               <SelectItem value="success">{t("logs.statusSuccess")}</SelectItem>
               <SelectItem value="error">{t("logs.statusError")}</SelectItem>
             </SelectGroup>
@@ -321,6 +329,7 @@ export function LogsPage({
             selectedId={selectedId}
             sortBy={sortBy}
             sortOrder={sortOrder}
+            statusDisplay={statusDisplay}
             onSort={handleSortChange}
             onSelect={(requestId) => setSelectedId(requestId)}
             onApplyRouteFilter={setRouteFilter}

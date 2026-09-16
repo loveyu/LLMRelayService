@@ -321,6 +321,7 @@ export default {
     searchSource: "搜索来源...",
     statusFilter: "状态筛选",
     allStatus: "全部状态",
+    statusFinal: "最终状态",
     searchStatus: "搜索状态...",
     statusSuccess: "成功 (2xx)",
     statusError: "失败 (4xx/5xx)",

@@ -26,7 +26,6 @@ import {
   formatCount,
   formatDuration,
   formatTime,
-  getHttpStatusLabel,
   shortText,
 } from "@/features/dashboard/utils"
 
@@ -102,6 +101,38 @@ function statusStyle(code: number | null): { bg: string; fg: string } {
   return { bg: "var(--lrs-success-bg)", fg: "var(--lrs-success)" }
 }
 
+export type StatusDisplayMode = "final" | "all"
+
+/**
+ * 状态徽章文案与提示:
+ * - final(默认):只显示最终状态,与详情口径一致(回退成功的显示 200)
+ * - all:发生过初始错误且与最终状态不同时显示完整轨迹(如 `429→200`),
+ *   配色仍按最终状态,一眼可见"出过错但已回退恢复"
+ */
+function statusBadgeInfo(
+  item: ConsoleRequestListItem,
+  statusDisplay: StatusDisplayMode,
+): { text: string; title: string } {
+  const initial = item.initial_response_status
+  const final = item.response_status
+  if (
+    statusDisplay === "all"
+    && initial != null
+    && initial >= 400
+    && final != null
+    && final !== initial
+  ) {
+    return {
+      text: `${initial}→${final}`,
+      title: `初始 ${initial} ${item.initial_response_status_text ?? ""} → 最终 ${final} ${item.response_status_text ?? ""}`.trim(),
+    }
+  }
+  return {
+    text: String(final ?? "--"),
+    title: `${final ?? "--"} ${item.response_status_text ?? ""}`.trim(),
+  }
+}
+
 /** Compact labeled value cell used inside the mobile log cards. */
 function StatCell({
   label,
@@ -137,10 +168,12 @@ function RequestLogMobileCard({
   item,
   isSelected,
   onSelect,
+  statusDisplay = "final",
 }: {
   item: ConsoleRequestListItem
   isSelected: boolean
   onSelect: (requestId: string) => void
+  statusDisplay?: StatusDisplayMode
 }) {
   const { t } = useTranslation()
   const timing = item.response_timing ?? {}
@@ -150,6 +183,7 @@ function RequestLogMobileCard({
   const outputTokens = item.response_usage?.output_tokens ?? item.response_usage?.total_output_tokens ?? 0
   const source = item.client_label ?? item.api_key_name
   const disconnectLabel = getDisconnectLabel(timing.disconnect_source, t)
+  const badge = statusBadgeInfo(item, statusDisplay)
 
   return (
     <div
@@ -162,7 +196,7 @@ function RequestLogMobileCard({
           onSelect(item.request_id)
         }
       }}
-      title={`${item.response_status ?? "--"} ${item.response_status_text ?? ""}`.trim()}
+      title={badge.title}
       className="cursor-pointer rounded-lg border border-border/70 border-l-[3px] bg-card px-3 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-accent"
       style={{
         borderLeftColor: isSelected ? "var(--primary)" : "transparent",
@@ -175,7 +209,7 @@ function RequestLogMobileCard({
           className="inline-block shrink-0 rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold"
           style={{ background: st.bg, color: st.fg }}
         >
-          {disconnectLabel ?? getHttpStatusLabel(item.response_status)}
+          {disconnectLabel ?? badge.text}
         </span>
         <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
           {formatTime(item.created_at)}
@@ -239,6 +273,7 @@ export function RequestLogTable({
   sortBy = "created_at",
   sortOrder = "desc",
   isMobile = false,
+  statusDisplay = "final",
   onSort,
   onSelect,
   onClearFilters,
@@ -254,6 +289,7 @@ export function RequestLogTable({
   sortBy?: RequestSortKey
   sortOrder?: SortDirection
   isMobile?: boolean
+  statusDisplay?: StatusDisplayMode
   onSort: (sortBy: RequestSortKey, sortOrder: SortDirection) => void
   onSelect: (requestId: string) => void
   onClearFilters?: () => void
@@ -350,6 +386,7 @@ export function RequestLogTable({
                       item={item}
                       isSelected={item.request_id === selectedId}
                       onSelect={onSelect}
+                      statusDisplay={statusDisplay}
                     />
                   ))}
                 </div>
@@ -364,6 +401,7 @@ export function RequestLogTable({
                   const st = statusStyle(item.response_status)
                   const source = item.client_label ?? item.api_key_name
                   const disconnectLabel = getDisconnectLabel(timing.disconnect_source, t)
+                  const badge = statusBadgeInfo(item, statusDisplay)
 
                   return (
                     <div
@@ -412,9 +450,9 @@ export function RequestLogTable({
                         <span
                           className="inline-block rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold"
                           style={{ background: st.bg, color: st.fg }}
-                          title={`${item.response_status ?? "--"} ${item.response_status_text ?? ""}`}
+                          title={badge.title}
                         >
-                          {disconnectLabel ?? getHttpStatusLabel(item.response_status)}
+                          {disconnectLabel ?? badge.text}
                         </span>
                       </span>
 
@@ -540,6 +578,7 @@ export function RequestLogTable({
                 const isSelected = item.request_id === selectedId
                 const st = statusStyle(item.response_status)
                 const disconnectLabel = getDisconnectLabel(timing.disconnect_source, t)
+                const badge = statusBadgeInfo(item, statusDisplay)
                 return (
                   <div
                     key={item.request_id}
@@ -570,8 +609,9 @@ export function RequestLogTable({
                       <span
                         className="inline-block rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold"
                         style={{ background: st.bg, color: st.fg }}
+                        title={badge.title}
                       >
-                        {disconnectLabel ?? getHttpStatusLabel(item.response_status)}
+                        {disconnectLabel ?? badge.text}
                       </span>
                     </span>
                     <span className="font-mono text-[11px] text-muted-foreground">
