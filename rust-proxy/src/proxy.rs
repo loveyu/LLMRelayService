@@ -315,51 +315,17 @@ async fn proxy_handler_inner(
         let responses_mode = route.responses_mode.as_ref();
         let mut converting_responses = false;
 
-        if is_responses {
-            match responses_mode {
-                Some(crate::config::OpenAiResponsesMode::Native) => {
-                    // pass through unchanged
-                }
-                Some(crate::config::OpenAiResponsesMode::Disabled) | None => {
-                    warn!(
-                        "Responses API endpoint hit but responsesMode is {:?}, returning 501",
-                        responses_mode
-                    );
-                    let message = format!(
-                        "渠道 {} 未启用 OpenAI Responses API（responsesMode={:?}），无法转发该请求",
-                        route.channel_name, responses_mode
-                    );
-                    let payload = serde_json::json!({
-                        "error": {
-                            "message": message,
-                            "type": "not_implemented_error",
-                            "code": "responses_not_supported",
-                            "param": null,
-                        },
-                    });
-                    let body_text = payload.to_string();
-                    emit_terminal_response_log(
-                        &state,
-                        &request_id,
-                        created_at,
-                        501,
-                        "NOT_IMPLEMENTED",
-                        serde_json::json!({}),
-                        Some(body_text.clone()),
-                        body_text.len() as u64,
-                        route.resolved_model.clone(),
-                        None,
-                    );
-                    return Ok(Response::builder()
-                        .status(StatusCode::NOT_IMPLEMENTED)
-                        .header("content-type", "application/json")
-                        .body(Body::from(body_text))
-                        .unwrap_or_else(|_| Response::new(Body::empty())));
-                }
-                Some(crate::config::OpenAiResponsesMode::ChatCompat) => {
-                    converting_responses = true;
-                }
-            }
+        // 该路由无法承接本次 Responses 请求(显式 disabled 或未配置支持)。
+        // 与冷却一样按"跳过该渠道"处理:初始路由命中时也继续 failover 到
+        // 同模型/站点策略下支持 Responses 的渠道,只有全部不可用才返回 501。
+        let responses_blocked = is_responses
+            && matches!(responses_mode, Some(crate::config::OpenAiResponsesMode::Disabled) | None);
+
+        if !responses_blocked
+            && is_responses
+            && matches!(responses_mode, Some(crate::config::OpenAiResponsesMode::ChatCompat))
+        {
+            converting_responses = true;
         }
 
         let target_url = if converting_responses {
@@ -399,6 +365,105 @@ async fn proxy_handler_inner(
                 b
             }
         };
+
+        // Responses 请求 + 当前路由不支持:跳过该路由继续 failover(初始路由
+        // 命中同样适用),只有所有路由都不支持时才返回 501。
+        if responses_blocked {
+            let was_fallback = attempt_index > 0;
+            warn!(
+                "Responses API unsupported on {} (responsesMode={:?}), trying next route",
+                route.channel_name, responses_mode
+            );
+            if advance_to_next_route(
+                &mut active_routes,
+                &mut attempt_index,
+                &failover_policy,
+                &model,
+                &state,
+                pathname,
+                search,
+                request_type.clone(),
+                &stripped_path,
+            ) {
+                let label = describe_route(&route);
+                if !failed_route_chain.contains(&label) {
+                    failed_route_chain.push(label);
+                }
+                failover_reason = Some("responses_unsupported".to_string());
+                if initial_response_status.is_none() {
+                    initial_response_status = Some(501);
+                    initial_response_status_text = Some("Not Implemented".to_string());
+                    initial_completed_at = Some(
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+                            as u64,
+                    );
+                }
+                send_request_log(
+                    &state,
+                    &request_id,
+                    created_at,
+                    &method,
+                    &uri,
+                    pathname,
+                    &route,
+                    route_model,
+                    &headers,
+                    &fwd_headers,
+                    &request_body,
+                    &body,
+                    auth_result.api_key_id.clone(),
+                    auth_result.api_key_name.clone(),
+                    if was_fallback { Some(describe_route(&initial_route)) } else { None },
+                    failed_route_chain.clone(),
+                    failover_reason.clone(),
+                    initial_response_status,
+                    initial_response_status_text.clone(),
+                    initial_completed_at,
+                    if was_fallback { Some(initial_route.channel_name.clone()) } else { None },
+                    if was_fallback {
+                        Some(initial_route.resolved_model.clone().unwrap_or_else(|| model.clone()))
+                    } else {
+                        None
+                    },
+                    retry_count,
+                );
+                disconnect_guard.arm();
+                retry_count = 0;
+                continue;
+            }
+
+            // 所有路由都不支持 Responses API:返回 501 并带明确的 JSON 错误体。
+            let message = format!(
+                "渠道 {} 未启用 OpenAI Responses API（responsesMode={:?}），无法转发该请求",
+                route.channel_name, responses_mode
+            );
+            let payload = serde_json::json!({
+                "error": {
+                    "message": message,
+                    "type": "not_implemented_error",
+                    "code": "responses_not_supported",
+                    "param": null,
+                },
+            });
+            let body_text = payload.to_string();
+            emit_terminal_response_log(
+                &state,
+                &request_id,
+                created_at,
+                501,
+                "NOT_IMPLEMENTED",
+                serde_json::json!({}),
+                Some(body_text.clone()),
+                body_text.len() as u64,
+                route.resolved_model.clone(),
+                None,
+            );
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_IMPLEMENTED)
+                .header("content-type", "application/json")
+                .body(Body::from(body_text))
+                .unwrap_or_else(|_| Response::new(Body::empty())));
+        }
 
         if let Some(remaining) = state.rate_limit_cooldowns.remaining(
             &route.channel_name,
