@@ -442,6 +442,49 @@ fn convert_text_format(text: &Value) -> Option<Value> {
     }
 }
 
+/// Chat Completions usage(prompt_tokens/completion_tokens)→ Responses usage
+/// (input_tokens/output_tokens)。Responses 客户端(codex 等)对 completed 事件与
+/// 响应对象里的 usage 做强类型解析,缺 input_tokens 会直接解析失败断流重连。
+/// 对齐 TS `convertChatUsageToResponsesUsage`:双向兼容读取,输出统一为
+/// Responses 规范结构;输入不是对象(或缺失)时返回全 0,保证字段始终齐全。
+fn convert_chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
+    let usage = match usage.filter(|u| u.is_object()) {
+        Some(u) => u,
+        None => {
+            return json!({
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "input_tokens_details": { "cached_tokens": 0 },
+                "output_tokens_details": { "reasoning_tokens": 0 },
+            });
+        }
+    };
+    let pick = |names: &[&str]| -> u64 {
+        names.iter().find_map(|name| usage.get(*name).and_then(|v| v.as_u64())).unwrap_or(0)
+    };
+    let detail = |containers: &[&str], field: &str| -> u64 {
+        containers
+            .iter()
+            .find_map(|name| usage.get(*name).and_then(|d| d.get(field)).and_then(|v| v.as_u64()))
+            .unwrap_or(0)
+    };
+    let input_tokens = pick(&["input_tokens", "prompt_tokens"]);
+    let output_tokens = pick(&["output_tokens", "completion_tokens"]);
+    json!({
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": usage.get("total_tokens").and_then(|v| v.as_u64())
+            .unwrap_or(input_tokens + output_tokens),
+        "input_tokens_details": {
+            "cached_tokens": detail(&["input_tokens_details", "prompt_tokens_details"], "cached_tokens"),
+        },
+        "output_tokens_details": {
+            "reasoning_tokens": detail(&["output_tokens_details", "completion_tokens_details"], "reasoning_tokens"),
+        },
+    })
+}
+
 /// Convert a non-streaming Chat Completions response to Responses API format.
 pub fn convert_chat_to_responses(body: &[u8]) -> Result<Vec<u8>, (u16, String)> {
     let chat: Value = serde_json::from_slice(body)
@@ -451,7 +494,7 @@ pub fn convert_chat_to_responses(body: &[u8]) -> Result<Vec<u8>, (u16, String)> 
     let choice = chat["choices"].as_array().and_then(|c| c.first()).unwrap_or(&Value::Null);
     let message = choice.get("message").unwrap_or(&Value::Null);
     let _finish_reason = choice["finish_reason"].as_str().unwrap_or("stop");
-    let usage = chat.get("usage").unwrap_or(&Value::Null);
+    let usage = convert_chat_usage_to_responses_usage(chat.get("usage"));
 
     let output_text = message["content"].as_str().unwrap_or("");
     let output = vec![json!({
@@ -621,7 +664,10 @@ impl ChatSseToResponsesSse {
                     if self.text_started {
                         self.flush_text_to_output(&mut events);
                     }
-                    let usage = parsed.get("usage").unwrap_or(&Value::Null);
+                    // usage 必须转成 Responses 规范字段(input_tokens/output_tokens):
+                    // codex 等客户端对 completed 事件的 usage 强类型解析,
+                    // 直接透传 chat 格式(prompt_tokens)会解析失败断流。
+                    let usage = convert_chat_usage_to_responses_usage(parsed.get("usage"));
                     events.push(format!(
                         "event: response.completed\ndata: {}\n\n",
                         json!({
@@ -824,6 +870,9 @@ impl ChatSseToResponsesSse {
             return events;
         }
         self.completed_sent = true;
+        // 兜底场景拿不到 usage,给全 0 对象保证字段齐全(客户端强类型解析
+        // 要求 input_tokens 存在,null 同样会解析失败)。
+        let usage = convert_chat_usage_to_responses_usage(None);
         events.push(format!(
             "event: response.completed\ndata: {}\n\n",
             json!({
@@ -833,7 +882,7 @@ impl ChatSseToResponsesSse {
                     "object": "response",
                     "status": "completed",
                     "model": self.model,
-                    "usage": null,
+                    "usage": usage,
                 }
             })
         ));
@@ -964,5 +1013,70 @@ mod tests {
 
         let events = converter.finish();
         assert_eq!(events.iter().filter(|e| e.contains("response.completed")).count(), 1);
+        // 兜底 usage 是全 0 对象,字段齐全(强类型客户端解析要求 input_tokens 存在)
+        assert!(events.iter().any(|e| e.contains("\"input_tokens\":0")));
+    }
+
+    /// completed 事件的 usage 必须是 Responses 规范字段(input_tokens/output_tokens):
+    /// 直接透传 chat 格式(prompt_tokens)会让 codex 等客户端解析
+    /// `ResponseCompleted` 时报 `missing field input_tokens` 并断流重连。
+    #[test]
+    fn chat_sse_completed_usage_uses_responses_field_names() {
+        let mut converter = ChatSseToResponsesSse::new("gpt-5.6-sol");
+
+        let events = converter.feed(
+            format!(
+                "data: {}\n\n",
+                json!({
+                    "id": "chatcmpl-1",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }],
+                    "usage": {
+                        "prompt_tokens": 15671,
+                        "completion_tokens": 3,
+                        "total_tokens": 15674,
+                        "prompt_tokens_details": { "cached_tokens": 100 },
+                    },
+                })
+            )
+            .as_bytes(),
+        );
+
+        let completed =
+            events.iter().find(|e| e.contains("response.completed")).expect("completed event");
+        assert!(completed.contains("\"input_tokens\":15671"), "got: {completed}");
+        assert!(completed.contains("\"output_tokens\":3"), "got: {completed}");
+        assert!(completed.contains("\"total_tokens\":15674"), "got: {completed}");
+        assert!(completed.contains("\"cached_tokens\":100"), "got: {completed}");
+        assert!(!completed.contains("prompt_tokens"), "chat field leaked: {completed}");
+    }
+
+    /// 上游 finish chunk 不带 usage 时,completed 的 usage 仍应是字段齐全的全 0 对象。
+    #[test]
+    fn chat_sse_completed_usage_falls_back_to_zeroed_object() {
+        let mut converter = ChatSseToResponsesSse::new("gpt-5.6-sol");
+
+        let events = converter.feed(
+            format!(
+                "data: {}\n\n",
+                json!({
+                    "id": "chatcmpl-1",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }],
+                })
+            )
+            .as_bytes(),
+        );
+
+        let completed =
+            events.iter().find(|e| e.contains("response.completed")).expect("completed event");
+        assert!(completed.contains("\"input_tokens\":0"), "got: {completed}");
+        assert!(completed.contains("\"output_tokens\":0"), "got: {completed}");
     }
 }
