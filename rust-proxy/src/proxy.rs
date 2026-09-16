@@ -267,12 +267,24 @@ async fn proxy_handler_inner(
     let mut initial_response_status: Option<u16> = None;
     let mut initial_response_status_text: Option<String> = None;
     let mut initial_completed_at: Option<u64> = None;
+    // 链上最后一个真实收到的上游错误响应快照:当后续渠道只出网络错误/超时/全部冷却
+    // 耗尽时,回传该响应而不是网关自造的 502/504,保证客户端拿到真实的 HTTP 错误。
+    let mut last_upstream_error: Option<CachedUpstreamError> = None;
     let rate_limit_cooldown_enabled =
         failover_policy.enabled && failover_policy.retry_on_status_codes.contains(&429);
 
     loop {
         if attempt_index >= active_routes.len() {
             warn!("All routes exhausted for {}", pathname);
+            if let Some(cached) = last_upstream_error.as_ref() {
+                return Ok(return_cached_upstream_error(
+                    &state,
+                    &request_id,
+                    created_at,
+                    cached,
+                    None,
+                ));
+            }
             emit_terminal_response_log(
                 &state,
                 &request_id,
@@ -313,7 +325,36 @@ async fn proxy_handler_inner(
                         "Responses API endpoint hit but responsesMode is {:?}, returning 501",
                         responses_mode
                     );
-                    return Err(StatusCode::NOT_IMPLEMENTED);
+                    let message = format!(
+                        "渠道 {} 未启用 OpenAI Responses API（responsesMode={:?}），无法转发该请求",
+                        route.channel_name, responses_mode
+                    );
+                    let payload = serde_json::json!({
+                        "error": {
+                            "message": message,
+                            "type": "not_implemented_error",
+                            "code": "responses_not_supported",
+                            "param": null,
+                        },
+                    });
+                    let body_text = payload.to_string();
+                    emit_terminal_response_log(
+                        &state,
+                        &request_id,
+                        created_at,
+                        501,
+                        "NOT_IMPLEMENTED",
+                        serde_json::json!({}),
+                        Some(body_text.clone()),
+                        body_text.len() as u64,
+                        route.resolved_model.clone(),
+                        None,
+                    );
+                    return Ok(Response::builder()
+                        .status(StatusCode::NOT_IMPLEMENTED)
+                        .header("content-type", "application/json")
+                        .body(Body::from(body_text))
+                        .unwrap_or_else(|_| Response::new(Body::empty())));
                 }
                 Some(crate::config::OpenAiResponsesMode::ChatCompat) => {
                     converting_responses = true;
@@ -365,55 +406,7 @@ async fn proxy_handler_inner(
             rate_limit_cooldown_enabled,
         ) {
             let retry_after_seconds = rate_limit_cooldown::retry_after_seconds(remaining);
-            let label = describe_route(&route);
-            if !failed_route_chain.contains(&label) {
-                failed_route_chain.push(label);
-            }
-            failover_reason = Some("rate_limit_cooldown".to_string());
-            if initial_response_status.is_none() {
-                initial_response_status = Some(429);
-                initial_response_status_text = Some("Too Many Requests".to_string());
-                initial_completed_at = Some(
-                    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
-                        as u64,
-                );
-            }
-
-            let is_fallback = attempt_index > 0;
-            send_request_log(
-                &state,
-                &request_id,
-                created_at,
-                &method,
-                &uri,
-                pathname,
-                &route,
-                route_model,
-                &headers,
-                &fwd_headers,
-                &request_body,
-                &body,
-                auth_result.api_key_id.clone(),
-                auth_result.api_key_name.clone(),
-                if is_fallback { Some(describe_route(&initial_route)) } else { None },
-                failed_route_chain.clone(),
-                failover_reason.clone(),
-                initial_response_status,
-                initial_response_status_text.clone(),
-                initial_completed_at,
-                if is_fallback { Some(initial_route.channel_name.clone()) } else { None },
-                if is_fallback {
-                    Some(initial_route.resolved_model.clone().unwrap_or_else(|| model.clone()))
-                } else {
-                    None
-                },
-                retry_count,
-            );
-            disconnect_guard.arm();
-            warn!(
-                "Rate-limit cooldown active for {} ({route_model}), skipping for {retry_after_seconds}s",
-                route.channel_name
-            );
+            let was_fallback = attempt_index > 0;
             if advance_to_next_route(
                 &mut active_routes,
                 &mut attempt_index,
@@ -423,29 +416,68 @@ async fn proxy_handler_inner(
                 pathname,
                 search,
                 request_type.clone(),
+                &stripped_path,
             ) {
+                // 还有其他可用路由:真正跳过冷却中的渠道,记录 failover 轨迹。
+                let label = describe_route(&route);
+                if !failed_route_chain.contains(&label) {
+                    failed_route_chain.push(label);
+                }
+                failover_reason = Some("rate_limit_cooldown".to_string());
+                if initial_response_status.is_none() {
+                    initial_response_status = Some(429);
+                    initial_response_status_text = Some("Too Many Requests".to_string());
+                    initial_completed_at = Some(
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+                            as u64,
+                    );
+                }
+
+                send_request_log(
+                    &state,
+                    &request_id,
+                    created_at,
+                    &method,
+                    &uri,
+                    pathname,
+                    &route,
+                    route_model,
+                    &headers,
+                    &fwd_headers,
+                    &request_body,
+                    &body,
+                    auth_result.api_key_id.clone(),
+                    auth_result.api_key_name.clone(),
+                    if was_fallback { Some(describe_route(&initial_route)) } else { None },
+                    failed_route_chain.clone(),
+                    failover_reason.clone(),
+                    initial_response_status,
+                    initial_response_status_text.clone(),
+                    initial_completed_at,
+                    if was_fallback { Some(initial_route.channel_name.clone()) } else { None },
+                    if was_fallback {
+                        Some(initial_route.resolved_model.clone().unwrap_or_else(|| model.clone()))
+                    } else {
+                        None
+                    },
+                    retry_count,
+                );
+                disconnect_guard.arm();
+                warn!(
+                    "Rate-limit cooldown active for {} ({route_model}), skipping for {retry_after_seconds}s",
+                    route.channel_name
+                );
                 retry_count = 0;
                 continue;
             }
 
-            let response = build_rate_limit_cooldown_response(&route, remaining);
-            let response_body = format!(
-                "渠道 {} 的模型 {} 正在 429 冷却中，约 {retry_after_seconds} 秒后重试",
+            // 没有任何可用 fallback:所有候选渠道都在 429 冷却中。忽略当前渠道的
+            // 冷却状态直接放行本次请求,让客户端拿到上游真实响应 —— 仍被限流则
+            // 透传真实的 Retry-After 与错误体;已恢复则成功并自动解除冷却。
+            warn!(
+                "All candidate routes in rate-limit cooldown; bypassing cooldown for {} ({}) as last resort",
                 route.channel_name, route_model
             );
-            emit_terminal_response_log(
-                &state,
-                &request_id,
-                created_at,
-                429,
-                "RATE_LIMIT_COOLDOWN",
-                serde_json::json!({ "retry-after": retry_after_seconds.to_string() }),
-                Some(response_body),
-                0,
-                route.resolved_model.clone(),
-                None,
-            );
-            return Ok(response);
         }
 
         let circuit_key = circuit_breaker::route_key(&route.channel_name, &target_url);
@@ -517,11 +549,22 @@ async fn proxy_handler_inner(
                     pathname,
                     search,
                     request_type.clone(),
+                    &stripped_path,
                 ) {
                     retry_count = 0;
                     continue;
                 }
 
+                if let Some(cached) = last_upstream_error.as_ref() {
+                    // 本渠道熔断跳过,但链上曾收到过真实 HTTP 响应:回传它。
+                    return Ok(return_cached_upstream_error(
+                        &state,
+                        &request_id,
+                        created_at,
+                        cached,
+                        route.resolved_model.clone(),
+                    ));
+                }
                 emit_terminal_response_log(
                     &state,
                     &request_id,
@@ -817,9 +860,16 @@ async fn proxy_handler_inner(
                 if failover_policy.enabled
                     && failover::should_trigger_failover(&failover_policy, &trigger)
                 {
+                    // 即将丢弃该错误响应去重试/回退:先缓存快照。若后续渠道全部失败
+                    // (网络错误/超时/冷却耗尽),回传这个链上最后的真实 HTTP 响应,
+                    // 而不是网关自造的 502/504。
+                    let captured = CachedUpstreamError::capture(upstream_resp).await;
                     if failover::should_retry_same_route(&trigger)
                         && retry_count < failover_policy.retry_attempts
                     {
+                        if let Ok(cached) = captured {
+                            last_upstream_error = Some(cached);
+                        }
                         retry_count += 1;
                         warn!(
                             "Status {status}, retrying same route ({retry_count}/{})",
@@ -836,13 +886,43 @@ async fn proxy_handler_inner(
                         pathname,
                         search,
                         request_type.clone(),
+                        &stripped_path,
                     ) {
+                        if let Ok(cached) = captured {
+                            last_upstream_error = Some(cached);
+                        }
                         retry_count = 0;
                         continue;
                     }
+
+                    // 上游非 2xx 且无可用 failover：透传(缓存的)最后一个上游错误响应。
+                    return match captured {
+                        Ok(cached) => Ok(return_cached_upstream_error(
+                            &state,
+                            &request_id,
+                            created_at,
+                            &cached,
+                            route.resolved_model.clone(),
+                        )),
+                        Err(error) => {
+                            emit_terminal_response_log(
+                                &state,
+                                &request_id,
+                                created_at,
+                                502,
+                                "Upstream Disconnected",
+                                serde_json::json!({}),
+                                Some(format!("读取上游错误响应时连接中断: {error}")),
+                                0,
+                                route.resolved_model.clone(),
+                                Some("upstream"),
+                            );
+                            Err(StatusCode::BAD_GATEWAY)
+                        }
+                    };
                 }
 
-                // 上游非 2xx 且无可用 failover：透传错误响应给客户端前，先补发响应日志，
+                // 非 failover 错误状态码(如 404、401)直接透传；透传前先补发响应日志，
                 // 否则日志页只能看到请求发起、看不到结束时间与上游错误体。
                 let err_headers = serde_json::to_value(
                     upstream_resp
@@ -953,6 +1033,7 @@ async fn proxy_handler_inner(
                         pathname,
                         search,
                         request_type.clone(),
+                        &stripped_path,
                     ) {
                         retry_count = 0;
                         continue;
@@ -960,6 +1041,16 @@ async fn proxy_handler_inner(
                 }
 
                 warn!("Upstream error: {e}");
+                if let Some(cached) = last_upstream_error.as_ref() {
+                    // 本渠道只出了网络错误,但链上曾收到过真实 HTTP 响应:回传它。
+                    return Ok(return_cached_upstream_error(
+                        &state,
+                        &request_id,
+                        created_at,
+                        cached,
+                        route.resolved_model.clone(),
+                    ));
+                }
                 emit_terminal_response_log(
                     &state,
                     &request_id,
@@ -1012,12 +1103,23 @@ async fn proxy_handler_inner(
                         pathname,
                         search,
                         request_type.clone(),
+                        &stripped_path,
                     ) {
                         retry_count = 0;
                         continue;
                     }
                 }
                 warn!("Upstream timeout");
+                if let Some(cached) = last_upstream_error.as_ref() {
+                    // 本渠道首字节超时,但链上曾收到过真实 HTTP 响应:回传它。
+                    return Ok(return_cached_upstream_error(
+                        &state,
+                        &request_id,
+                        created_at,
+                        cached,
+                        route.resolved_model.clone(),
+                    ));
+                }
                 emit_terminal_response_log(
                     &state,
                     &request_id,
@@ -1046,9 +1148,19 @@ fn advance_to_next_route(
     pathname: &str,
     search: &str,
     request_type: crate::config::UpstreamType,
+    stripped_path: &str,
 ) -> bool {
     if *attempt_index + 1 < active_routes.len()
-        || try_add_fallbacks(active_routes, policy, model, state, pathname, search, request_type)
+        || try_add_fallbacks(
+            active_routes,
+            policy,
+            model,
+            state,
+            pathname,
+            search,
+            request_type,
+            stripped_path,
+        )
     {
         *attempt_index += 1;
         return true;
@@ -1056,6 +1168,7 @@ fn advance_to_next_route(
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_add_fallbacks(
     active_routes: &mut Vec<RouteResult>,
     policy: &crate::config::GatewayFailoverPolicy,
@@ -1064,6 +1177,7 @@ fn try_add_fallbacks(
     pathname: &str,
     search: &str,
     request_type: crate::config::UpstreamType,
+    stripped_path: &str,
 ) -> bool {
     use crate::config::{ModelFallbackMode, RoutingVisibility};
 
@@ -1142,7 +1256,20 @@ fn try_add_fallbacks(
                 policy.enabled && policy.retry_on_status_codes.contains(&429),
             )
             .is_some();
-        if !cooling_down && !seen.contains(&key) && added < remaining_fallbacks {
+        // Responses API 请求:fallback 候选必须支持(native/chat_compat)Responses 端点。
+        // 显式 disabled(或未知模式)的候选转发过去只会拿到网关自造的 501,对本次
+        // 请求形态不可用,直接排除 —— 让冷却/失败的初始渠道把真实错误透传给客户端。
+        let responses_unsupported = responses::is_responses_request(stripped_path, &r.target_url)
+            && !matches!(
+                r.responses_mode,
+                Some(crate::config::OpenAiResponsesMode::Native)
+                    | Some(crate::config::OpenAiResponsesMode::ChatCompat)
+            );
+        if !cooling_down
+            && !responses_unsupported
+            && !seen.contains(&key)
+            && added < remaining_fallbacks
+        {
             seen.insert(key);
             new_routes.push(r);
             added += 1;
@@ -1565,37 +1692,77 @@ fn describe_trigger(trigger: &failover::FailoverTrigger) -> String {
     }
 }
 
-fn build_rate_limit_cooldown_response(
-    route: &RouteResult,
-    remaining: std::time::Duration,
+/// 链上最后一个真实收到的上游错误响应快照。failover 链路最终失败(后续渠道网络
+/// 错误/超时/全部冷却耗尽)时回传它,保证客户端拿到真实的上游 HTTP 错误(状态码、
+/// 头、含 Retry-After 的错误体),而不是网关自造的 502/504。
+struct CachedUpstreamError {
+    status: StatusCode,
+    headers: HeaderMap,
+    body: Bytes,
+}
+
+impl CachedUpstreamError {
+    /// 消费上游错误响应并读全量 body 做快照。能触发 failover 的都是错误状态码,
+    /// 响应体不会是大体积 SSE 流,直接读全量即可;读取失败说明连接中断。
+    async fn capture(upstream_resp: reqwest::Response) -> Result<Self, String> {
+        let status = upstream_resp.status();
+        let headers = upstream_resp.headers().clone();
+        let body = upstream_resp.bytes().await.map_err(|e| e.to_string())?;
+        Ok(Self { status, headers, body })
+    }
+
+    fn headers_json(&self) -> Value {
+        serde_json::to_value(
+            self.headers
+                .iter()
+                .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                .collect::<std::collections::HashMap<_, _>>(),
+        )
+        .unwrap_or_default()
+    }
+
+    fn body_content(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
+    }
+
+    /// 把快照透传给客户端(过滤 hop-by-hop 头,body 定长无需再写 content-length)。
+    fn to_response(&self) -> Response {
+        let mut builder = Response::builder().status(self.status);
+        for (key, value) in self.headers.iter() {
+            if hop_by_hop_set().contains(key.as_str()) {
+                continue;
+            }
+            if let Ok(name) = HeaderName::from_bytes(key.as_str().as_bytes())
+                && let Ok(val) = HeaderValue::from_bytes(value.as_bytes())
+            {
+                builder = builder.header(name, val);
+            }
+        }
+        builder.body(Body::from(self.body.clone())).unwrap_or_else(|_| Response::new(Body::empty()))
+    }
+}
+
+/// 回传缓存的上游错误响应,并补发终端响应日志(日志页才能看到结束时间与错误体)。
+fn return_cached_upstream_error(
+    state: &AppState,
+    request_id: &str,
+    created_at: u64,
+    cached: &CachedUpstreamError,
+    response_model: Option<String>,
 ) -> Response {
-    let retry_after_seconds = rate_limit_cooldown::retry_after_seconds(remaining);
-    let message = format!(
-        "渠道 {} 的模型 {} 正在限流冷却中，请稍后重试",
-        route.channel_name,
-        route.resolved_model.as_deref().unwrap_or("unknown")
+    emit_terminal_response_log(
+        state,
+        request_id,
+        created_at,
+        cached.status.as_u16(),
+        "ERROR",
+        cached.headers_json(),
+        Some(cached.body_content()),
+        cached.body.len() as u64,
+        response_model,
+        None,
     );
-    let payload = if transform::is_anthropic(&route.upstream_type) {
-        serde_json::json!({
-            "type": "error",
-            "error": { "type": "rate_limit_error", "message": message },
-        })
-    } else {
-        serde_json::json!({
-            "error": {
-                "message": message,
-                "type": "rate_limit_error",
-                "code": "rate_limit_cooldown",
-                "param": null,
-            },
-        })
-    };
-    Response::builder()
-        .status(StatusCode::TOO_MANY_REQUESTS)
-        .header("content-type", "application/json")
-        .header("retry-after", retry_after_seconds.to_string())
-        .body(Body::from(payload.to_string()))
-        .unwrap_or_else(|_| Response::new(Body::empty()))
+    cached.to_response()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1783,5 +1950,163 @@ mod tests {
         drop(guard);
 
         assert!(receiver.try_recv().is_err());
+    }
+
+    fn failover_test_state() -> AppState {
+        use crate::app_state::RoutingTable;
+        use crate::config::{
+            ConfigEntry, GatewayFailoverPolicy, ModelConfig, ModelFallbackMode,
+            OpenAiResponsesMode, SyncConfigPayload, UpstreamType,
+        };
+
+        let entry =
+            |base: &str, model: &str, responses_mode: Option<OpenAiResponsesMode>| ConfigEntry {
+                upstream_type: UpstreamType::OpenAI,
+                target_base_url: base.to_string(),
+                system_prompt: None,
+                auth: None,
+                models: Some(vec![ModelConfig {
+                    model: model.to_string(),
+                    context: None,
+                    extra: serde_json::Map::new(),
+                }]),
+                priority: 0,
+                enabled: true,
+                routing_visibility: None,
+                responses_mode,
+                extra_fields: None,
+                provider_uuid: None,
+                auto_sync_models: false,
+                claude_code_compat: false,
+            };
+
+        let mut routing = RoutingTable::from_payload(SyncConfigPayload::default());
+        routing.providers = std::collections::HashMap::from([
+            (
+                "primary".to_string(),
+                entry("http://primary.example/v1", "gpt-5", Some(OpenAiResponsesMode::Native)),
+            ),
+            (
+                "chat-only".to_string(),
+                entry("http://chat-only.example/v1", "gpt-4", Some(OpenAiResponsesMode::Disabled)),
+            ),
+            (
+                "compat".to_string(),
+                entry("http://compat.example/v1", "gpt-4o", Some(OpenAiResponsesMode::ChatCompat)),
+            ),
+        ]);
+        routing.failover = GatewayFailoverPolicy {
+            enabled: true,
+            retry_attempts: 0,
+            model_fallback_mode: ModelFallbackMode::AnyModel,
+            max_fallback_attempts: 5,
+            custom_model_fallbacks: vec![],
+            retry_on_timeout: true,
+            retry_on_network_error: true,
+            retry_on_status_codes: vec![429],
+            retry_on_status_ranges: vec![],
+            circuit_breaker_enabled: true,
+            circuit_breaker_failure_threshold: 3,
+            circuit_breaker_cooldown_ms: 10_000,
+        };
+
+        let (ipc, _rx) = crate::ipc::IpcSender::test_channel();
+        AppState::new(routing, ipc)
+    }
+
+    fn resolve_initial(state: &AppState, model: &str) -> RouteResult {
+        let rt = state.routing.try_read().expect("Routing lock");
+        routing::resolve_routes_by_model(
+            "/v1/responses",
+            "",
+            model,
+            Some(crate::config::UpstreamType::OpenAI),
+            &rt.providers,
+            &rt.aliases,
+        )
+        .pop()
+        .expect("initial route")
+    }
+
+    /// /v1/responses 请求的 fallback 候选必须排除 responsesMode=disabled 的渠道,
+    /// 否则唯一可用渠道冷却/失败时会把请求转发给只会 501 的渠道。
+    #[test]
+    fn responses_fallback_excludes_disabled_channels() {
+        let state = failover_test_state();
+        let policy = state.routing.try_read().expect("Routing lock").failover.clone();
+        let mut active_routes = vec![resolve_initial(&state, "gpt-5")];
+
+        let added = try_add_fallbacks(
+            &mut active_routes,
+            &policy,
+            "gpt-5",
+            &state,
+            "/v1/responses",
+            "",
+            crate::config::UpstreamType::OpenAI,
+            "/v1/responses",
+        );
+
+        assert!(added);
+        let channels: Vec<&str> = active_routes.iter().map(|r| r.channel_name.as_str()).collect();
+        assert!(
+            !channels.contains(&"chat-only"),
+            "disabled channel must be excluded: {channels:?}"
+        );
+        assert!(channels.contains(&"compat"), "chat_compat channel should be usable: {channels:?}");
+    }
+
+    /// 非 Responses 端点的请求不受 responsesMode 过滤限制,disabled 渠道仍可作为 fallback。
+    #[test]
+    fn chat_fallback_keeps_disabled_channels() {
+        let state = failover_test_state();
+        let policy = state.routing.try_read().expect("Routing lock").failover.clone();
+        let mut active_routes = vec![resolve_initial(&state, "gpt-5")];
+
+        let added = try_add_fallbacks(
+            &mut active_routes,
+            &policy,
+            "gpt-5",
+            &state,
+            "/v1/chat/completions",
+            "",
+            crate::config::UpstreamType::OpenAI,
+            "/v1/chat/completions",
+        );
+
+        assert!(added);
+        let channels: Vec<&str> = active_routes.iter().map(|r| r.channel_name.as_str()).collect();
+        assert!(
+            channels.contains(&"chat-only"),
+            "chat requests should keep disabled-responses channel: {channels:?}"
+        );
+    }
+
+    /// 全部候选都不可用(disabled 被排除、可用渠道冷却中)时不再添加 fallback,
+    /// 调用方应忽略冷却放行最后一个渠道,而不是返回网关自造的 429。
+    #[test]
+    fn responses_fallback_returns_false_when_only_cooldown_free_channel_is_disabled() {
+        let state = failover_test_state();
+        // 把两个支持 Responses 的渠道全部打入 429 冷却(any_model 候选不改写模型名,
+        // 冷却按请求模型 gpt-5 查询)
+        state.rate_limit_cooldowns.record_429("primary", "gpt-5", Some("30"), true);
+        state.rate_limit_cooldowns.record_429("compat", "gpt-5", Some("30"), true);
+
+        let policy = state.routing.try_read().expect("Routing lock").failover.clone();
+        let mut active_routes = vec![resolve_initial(&state, "gpt-5")];
+
+        let added = try_add_fallbacks(
+            &mut active_routes,
+            &policy,
+            "gpt-5",
+            &state,
+            "/v1/responses",
+            "",
+            crate::config::UpstreamType::OpenAI,
+            "/v1/responses",
+        );
+
+        assert!(!added, "no usable fallback should be added");
+        assert_eq!(active_routes.len(), 1);
     }
 }
