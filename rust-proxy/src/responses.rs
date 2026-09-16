@@ -529,11 +529,21 @@ pub struct ChatSseToResponsesSse {
     started: bool,
     text_started: bool,
     thinking_started: bool,
+    /// message item 的 added/content_part.added 事件只发一次;文本与 tool_calls
+    /// 交错时后续 flush 只继续发 delta/done,避免重复的同 id item 事件。
+    message_started: bool,
     /// `response.completed` 是 Responses SSE 的终结事件,全流只能发一次。
     /// 中转上游(kiro/astream 等)常在流尾发多个带 finish_reason 的 chunk,
     /// 再叠加流结束时的兜底补发,没有该标志就会产生重复的 completed 事件,
     /// 导致客户端(codex)在第一个 completed 后正常关闭连接却被记为 499。
     completed_sent: bool,
+    /// 全量思考文本(<think> 标签内容),供 completed.output 的 reasoning item。
+    thinking_text: String,
+    /// 全量正文文本(跨多次 flush 累积),供 completed.output 的 message item。
+    message_text: String,
+    /// function_call items(按 call_id 去重,多 chunk 时后到覆盖),供
+    /// completed.output 汇总。
+    function_calls: std::collections::BTreeMap<String, Value>,
     #[expect(dead_code)]
     in_think_tag: bool,
     #[expect(dead_code)]
@@ -551,7 +561,11 @@ impl ChatSseToResponsesSse {
             started: false,
             text_started: false,
             thinking_started: false,
+            message_started: false,
             completed_sent: false,
+            thinking_text: String::new(),
+            message_text: String::new(),
+            function_calls: std::collections::BTreeMap::new(),
             in_think_tag: false,
             pending_text: String::new(),
             buf: Vec::new(),
@@ -619,7 +633,12 @@ impl ChatSseToResponsesSse {
             }
 
             // Collect text delta
-            if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
+            // 收到非空 content 即标记 text_started,否则 finish/tool_call 触发的
+            // flush 因 text_started 恒为 false 永远不会执行,正文全部滞留丢失。
+            if let Some(content) = delta.get("content").and_then(|v| v.as_str())
+                && !content.is_empty()
+            {
+                self.text_started = true;
                 self.delta_buf.extend_from_slice(content.as_bytes());
             }
 
@@ -652,6 +671,18 @@ impl ChatSseToResponsesSse {
                             "response_id": self.response_id,
                         })
                     ));
+                    // completed.output 汇总用(多 chunk 增量时按 call_id 覆盖)
+                    self.function_calls.insert(
+                        id.to_string(),
+                        json!({
+                            "id": format!("fc_{}", id),
+                            "type": "function_call",
+                            "call_id": id,
+                            "name": func_name,
+                            "arguments": func_args,
+                            "status": "completed",
+                        }),
+                    );
                 }
             }
 
@@ -668,6 +699,7 @@ impl ChatSseToResponsesSse {
                     // codex 等客户端对 completed 事件的 usage 强类型解析,
                     // 直接透传 chat 格式(prompt_tokens)会解析失败断流。
                     let usage = convert_chat_usage_to_responses_usage(parsed.get("usage"));
+                    let output = self.build_output_items();
                     events.push(format!(
                         "event: response.completed\ndata: {}\n\n",
                         json!({
@@ -677,6 +709,7 @@ impl ChatSseToResponsesSse {
                                 "object": "response",
                                 "status": "completed",
                                 "model": self.model,
+                                "output": output,
                                 "usage": usage,
                             }
                         })
@@ -730,38 +763,45 @@ impl ChatSseToResponsesSse {
                     "response_id": self.response_id,
                 })
             ));
+            // 累积全量思考文本,completed.output 的 reasoning item 需要
+            self.thinking_text.push_str(&think_text);
         }
 
-        events.push(format!(
-            "event: response.output_item.added\ndata: {}\n\n",
-            json!({
-                "type": "response.output_item.added",
-                "output_index": 0,
-                "item": {
-                    "id": self.msg_id,
-                    "type": "message",
-                    "status": "in_progress",
-                    "role": "assistant",
-                    "content": [],
-                },
-                "response_id": self.response_id,
-            })
-        ));
-        events.push(format!(
-            "event: response.content_part.added\ndata: {}\n\n",
-            json!({
-                "type": "response.content_part.added",
-                "item_id": self.msg_id,
-                "output_index": 0,
-                "content_index": 0,
-                "part": {
-                    "type": "output_text",
-                    "text": "",
-                    "annotations": [],
-                },
-                "response_id": self.response_id,
-            })
-        ));
+        // message item 的 added 系列事件只发一次:文本与 tool_calls 交错时
+        // 后续 flush 只继续发 delta/done,避免重复的同 id message item。
+        if !self.message_started {
+            self.message_started = true;
+            events.push(format!(
+                "event: response.output_item.added\ndata: {}\n\n",
+                json!({
+                    "type": "response.output_item.added",
+                    "output_index": 0,
+                    "item": {
+                        "id": self.msg_id,
+                        "type": "message",
+                        "status": "in_progress",
+                        "role": "assistant",
+                        "content": [],
+                    },
+                    "response_id": self.response_id,
+                })
+            ));
+            events.push(format!(
+                "event: response.content_part.added\ndata: {}\n\n",
+                json!({
+                    "type": "response.content_part.added",
+                    "item_id": self.msg_id,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "part": {
+                        "type": "output_text",
+                        "text": "",
+                        "annotations": [],
+                    },
+                    "response_id": self.response_id,
+                })
+            ));
+        }
 
         if !output_text.is_empty() {
             events.push(format!(
@@ -775,6 +815,8 @@ impl ChatSseToResponsesSse {
                     "response_id": self.response_id,
                 })
             ));
+            // 累积全量正文,completed.output 的 message item 需要
+            self.message_text.push_str(&output_text);
         }
 
         events.push(format!(
@@ -803,12 +845,44 @@ impl ChatSseToResponsesSse {
         self.text_started = true;
     }
 
+    /// 汇总 completed 事件的 response.output:reasoning(若有)→ message(若有
+    /// 正文)→ function_calls(按插入顺序)。codex 等客户端以 completed.output
+    /// 为最终内容依据,缺失该数组会被当成空响应("不可用")。
+    fn build_output_items(&self) -> Vec<Value> {
+        let mut output = Vec::new();
+        if !self.thinking_text.is_empty() {
+            output.push(json!({
+                "id": format!("rs_{}", self.msg_id),
+                "type": "reasoning",
+                "status": "completed",
+                "summary": [],
+            }));
+        }
+        if self.text_started || !self.message_text.is_empty() {
+            output.push(json!({
+                "id": self.msg_id,
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{
+                    "type": "output_text",
+                    "text": self.message_text,
+                    "annotations": [],
+                }],
+            }));
+        }
+        output.extend(self.function_calls.values().cloned());
+        output
+    }
+
     /// Flush any remaining data and emit completion events
     pub fn finish(&mut self) -> Vec<String> {
+        let mut events = Vec::new();
+        // 残留文本(异常截断)先作为最后一段 delta 发出并累积,再统一走
+        // completed 补发 —— 提前 return 会让客户端永远收不到终结事件。
         if self.text_started && !self.delta_buf.is_empty() {
             let output_text = String::from_utf8_lossy(&self.delta_buf).into_owned();
             let clean = strip_think_tags(&output_text);
-            let mut events = Vec::new();
             if !clean.is_empty() {
                 events.push(format!(
                     "event: response.output_text.delta\ndata: {}\n\n",
@@ -821,6 +895,7 @@ impl ChatSseToResponsesSse {
                         "response_id": self.response_id,
                     })
                 ));
+                self.message_text.push_str(&clean);
             }
             events.push(format!(
                 "event: response.output_text.done\ndata: {}\n\n",
@@ -844,10 +919,8 @@ impl ChatSseToResponsesSse {
                 })
             ));
             self.delta_buf.clear();
-            return events;
         }
 
-        let mut events = Vec::new();
         if !self.started {
             self.started = true;
             events.push(format!(
@@ -873,6 +946,7 @@ impl ChatSseToResponsesSse {
         // 兜底场景拿不到 usage,给全 0 对象保证字段齐全(客户端强类型解析
         // 要求 input_tokens 存在,null 同样会解析失败)。
         let usage = convert_chat_usage_to_responses_usage(None);
+        let output = self.build_output_items();
         events.push(format!(
             "event: response.completed\ndata: {}\n\n",
             json!({
@@ -882,6 +956,7 @@ impl ChatSseToResponsesSse {
                     "object": "response",
                     "status": "completed",
                     "model": self.model,
+                    "output": output,
                     "usage": usage,
                 }
             })
@@ -1015,6 +1090,110 @@ mod tests {
         assert_eq!(events.iter().filter(|e| e.contains("response.completed")).count(), 1);
         // 兜底 usage 是全 0 对象,字段齐全(强类型客户端解析要求 input_tokens 存在)
         assert!(events.iter().any(|e| e.contains("\"input_tokens\":0")));
+        // 异常截断时残留文本也要进入 completed.output,不能丢
+        assert!(
+            events.iter().any(|e| e.contains("hi") && e.contains("response.completed")),
+            "truncated text must appear in completed.output"
+        );
+    }
+
+    /// 正文必须真正发出去:finish chunk 触发 flush 生成 output_text 事件,
+    /// 且 completed.output 的 message item 携带全量文本。此前 text_started
+    /// 永远不会被置位,flush 从不执行 → 客户端只收到 created+completed 的
+    /// 空响应(codex 表现为"不可用")。
+    #[test]
+    fn chat_sse_emits_text_output_events_and_completed_output() {
+        let mut converter = ChatSseToResponsesSse::new("gpt-5.6-sol");
+
+        let chunk = |content: &str, finish: serde_json::Value| {
+            format!(
+                "data: {}\n\n",
+                json!({
+                    "id": "chatcmpl-1",
+                    "choices": [{
+                        "index": 0,
+                        "delta": { "content": content },
+                        "finish_reason": finish,
+                    }],
+                })
+            )
+        };
+
+        let _ = converter.feed(chunk("你好，", Value::Null).as_bytes());
+        let _ = converter.feed(chunk("世界", Value::Null).as_bytes());
+        let events = converter.feed(chunk("", json!("stop")).as_bytes());
+
+        // message item 事件序列(added + delta + done)
+        assert!(
+            events
+                .iter()
+                .any(|e| e.contains("response.output_item.added")
+                    && e.contains("\"type\":\"message\"")),
+            "message item added missing"
+        );
+        assert!(
+            events.iter().any(|e| e.contains("response.output_text.delta")),
+            "text delta missing"
+        );
+        assert!(
+            events.iter().any(|e| e.contains("response.output_text.done")),
+            "text done missing"
+        );
+
+        // completed.output 的 message item 携带全量文本
+        let completed =
+            events.iter().find(|e| e.contains("response.completed")).expect("completed event");
+        assert!(
+            completed.contains("你好，世界"),
+            "full text missing in completed.output: {completed}"
+        );
+        assert!(completed.contains("\"output\":"), "completed.output missing");
+    }
+
+    /// 文本与 tool_calls 交错时,message item 的 added 事件只发一次。
+    #[test]
+    fn chat_sse_dedupes_message_item_added_across_flushes() {
+        let mut converter = ChatSseToResponsesSse::new("gpt-5.6-sol");
+
+        let text_chunk = format!(
+            "data: {}\n\n",
+            json!({
+                "id": "chatcmpl-1",
+                "choices": [{
+                    "index": 0,
+                    "delta": { "content": "前半段" },
+                    "finish_reason": null,
+                }],
+            })
+        );
+        let tool_chunk = format!(
+            "data: {}\n\n",
+            json!({
+                "id": "chatcmpl-1",
+                "choices": [{
+                    "index": 0,
+                    "delta": { "tool_calls": [{
+                        "index": 2,
+                        "id": "call_1",
+                        "function": { "name": "exec", "arguments": "{}" },
+                    }] },
+                    "finish_reason": null,
+                }],
+            })
+        );
+
+        let _ = converter.feed(text_chunk.as_bytes());
+        let events = converter.feed(tool_chunk.as_bytes());
+
+        let message_added = events
+            .iter()
+            .filter(|e| {
+                e.contains("response.output_item.added") && e.contains("\"type\":\"message\"")
+            })
+            .count();
+        assert_eq!(message_added, 1, "message item added must be emitted once");
+        // function_call item 同时进入事件流
+        assert!(events.iter().any(|e| e.contains("\"type\":\"function_call\"")));
     }
 
     /// completed 事件的 usage 必须是 Responses 规范字段(input_tokens/output_tokens):
