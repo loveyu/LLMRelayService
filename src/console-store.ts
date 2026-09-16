@@ -992,44 +992,28 @@ function withoutConnectivityTests(base: SQL | undefined): SQL {
 
 function buildRequestWhere(filters?: ConsoleQueryFilters, options?: { requireCompletedResponse?: boolean }): SQL | undefined {
   const conditions: SQL[] = [];
-  const recoveredInitialFailure = and(
-    sql`${consoleRequests.initialResponseStatus} >= 400`,
-    sql`${consoleRequests.responseStatus} >= 200`,
-    sql`${consoleRequests.responseStatus} < 400`,
-  ) as SQL;
   if (options?.requireCompletedResponse) {
     conditions.push(isNotNull(consoleRequests.responseStatus));
   }
   if (filters?.route) {
-    conditions.push(filters.status === 'error'
-      ? sql`CASE
-        WHEN ${recoveredInitialFailure}
-        THEN COALESCE(${consoleRequests.originalRoutePrefix}, ${consoleRequests.routePrefix})
-        ELSE ${consoleRequests.routePrefix}
-      END = ${filters.route}`
-      : eq(consoleRequests.routePrefix, filters.route));
+    conditions.push(eq(consoleRequests.routePrefix, filters.route));
   }
   if (filters?.model) {
-    conditions.push(filters.status === 'error'
-      ? sql`CASE
-        WHEN ${recoveredInitialFailure}
-        THEN COALESCE(${consoleRequests.originalRequestModel}, ${getModelBucketExpression()})
-        ELSE ${getModelBucketExpression()}
-      END = ${filters.model}`
-      : sql`${getModelBucketExpression()} = ${filters.model}`);
+    conditions.push(sql`${getModelBucketExpression()} = ${filters.model}`);
   }
   if (filters?.created_after != null) {
     conditions.push(gte(consoleRequests.createdAt, filters.created_after));
   }
 
-  // 状态筛选
+  // 状态筛选:按最终响应状态判断。"初始 429 → 回退成功 200"的请求算成功,
+  // 不进错误视图 —— 否则列表(显示初始错误)与详情(显示最终 200)口径
+  // 不一致,点开"错误"行看到的却是正常日志。
   if (filters?.status === "success") {
     conditions.push(and(isNotNull(consoleRequests.responseStatus), sql`${consoleRequests.responseStatus} >= 200`, sql`${consoleRequests.responseStatus} < 400`) as SQL);
   } else if (filters?.status === "error") {
     conditions.push(or(
       isNull(consoleRequests.responseStatus),
       sql`${consoleRequests.responseStatus} >= 400`,
-      recoveredInitialFailure,
     ) as SQL);
   }
 
@@ -1434,42 +1418,22 @@ function stripMessageRoles(summary: PayloadSummaryForConsole | null): PayloadSum
 function mapListRow(
   row: ConsoleRequestListRow,
   overrides?: Map<string, ModelMetadataOverride>,
-  showRecoveredInitialFailure = false,
 ): ConsoleRequestListItem {
   const finalStatus = normalizeNullableNumber(row.response_status);
   const initialStatus = normalizeStoredInitialNumber(row.initial_response_status);
-  const recoveredInitialFailure = showRecoveredInitialFailure
-    && initialStatus != null
-    && initialStatus >= 400
-    && finalStatus != null
-    && finalStatus >= 200
-    && finalStatus < 400;
   const initialCompletedAt = normalizeStoredInitialNumber(row.initial_completed_at);
   const createdAt = normalizeNumber(row.created_at);
   const upstreamType = row.upstream_type === 'openai' ? 'openai' : 'anthropic';
   const responseUsage = withCalculatedUsage(row.request_model, toUsage(row), upstreamType, row.route_prefix, overrides, row.cost_pricing_json);
   const sourceRequestType = ((row as any).source_request_type ?? 'unknown') as DetectedRequestKind;
-  const responseTiming = recoveredInitialFailure
-    ? {
-      response_body_bytes: 0,
-      first_chunk_at: initialCompletedAt,
-      first_token_at: null,
-      completed_at: initialCompletedAt,
-      disconnect_source: null,
-      disconnected_at: null,
-      has_streaming_content: false,
-      first_chunk_latency_ms: initialCompletedAt == null ? null : Math.max(0, initialCompletedAt - createdAt),
-      first_token_latency_ms: null,
-      duration_ms: initialCompletedAt == null ? null : Math.max(0, initialCompletedAt - createdAt),
-      generation_duration_ms: null,
-      disconnect_latency_ms: null,
-    }
-    : toTiming(row);
+  // 列表恒展示最终状态/渠道/耗时,与详情口径一致;"初始 429 → 回退成功"的
+  // 请求按成功显示(其 failover_from/chain 字段仍保留回退轨迹)。
+  const responseTiming = toTiming(row);
 
   return {
     request_id: row.request_id,
     created_at: createdAt,
-    route_prefix: recoveredInitialFailure ? row.original_route_prefix ?? row.route_prefix : row.route_prefix,
+    route_prefix: row.route_prefix,
     upstream_type: upstreamType,
     source_request_type: sourceRequestType,
     client_label: getRequestClientLabel(row.api_key_name, sourceRequestType),
@@ -1477,9 +1441,9 @@ function mapListRow(
     api_key_name: row.api_key_name ?? null,
     path: row.path,
     target_url: row.target_url,
-    request_model: recoveredInitialFailure ? row.original_request_model ?? row.request_model : row.request_model,
-    response_status: recoveredInitialFailure ? initialStatus : finalStatus,
-    response_status_text: recoveredInitialFailure ? row.initial_response_status_text ?? '' : row.response_status_text ?? '',
+    request_model: row.request_model,
+    response_status: finalStatus,
+    response_status_text: row.response_status_text ?? '',
     initial_response_status: initialStatus,
     initial_response_status_text: row.initial_response_status_text ?? '',
     initial_completed_at: initialCompletedAt,
@@ -1852,15 +1816,7 @@ export async function listConsoleRequests(
   const orderByColumn = (() => {
     switch (sortBy) {
       case 'response_status':
-        return filters?.status === 'error'
-          ? sql`CASE
-            WHEN ${consoleRequests.initialResponseStatus} >= 400
-              AND ${consoleRequests.responseStatus} >= 200
-              AND ${consoleRequests.responseStatus} < 400
-            THEN ${consoleRequests.initialResponseStatus}
-            ELSE ${consoleRequests.responseStatus}
-          END`
-          : consoleRequests.responseStatus;
+        return consoleRequests.responseStatus;
       case 'tokens':
         return consoleRequests.totalTokens;
       case 'created_at':
@@ -1938,7 +1894,7 @@ export async function listConsoleRequests(
   ]);
 
   return {
-    requests: rows.map((row) => mapListRow(row, overrides, filters?.status === 'error')),
+    requests: rows.map((row) => mapListRow(row, overrides)),
     total,
   };
 }

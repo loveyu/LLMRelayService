@@ -105,17 +105,14 @@ describe('getProviderRecentHttpStatuses', () => {
       response_status: 200,
     });
 
+    // 错误视图只含最终失败的请求:"初始 429 → 回退成功 200"按成功处理,
+    // 不再以初始错误状态进入错误视图(避免点开"错误"行看到正常日志)。
     const errorLogs = await listConsoleRequests(50, 0, { status: 'error' });
-    expect(errorLogs.requests[0]).toMatchObject({
-      route_prefix: 'primary-channel',
-      request_model: 'primary-model',
-      response_status: 429,
-      response_status_text: 'Too Many Requests',
-      response_timing: { duration_ms: 25 },
-    });
+    expect(errorLogs.total).toBe(0);
 
-    expect((await listConsoleRequests(50, 0, { status: 'error', route: 'primary-channel' })).total).toBe(1);
+    expect((await listConsoleRequests(50, 0, { status: 'error', route: 'primary-channel' })).total).toBe(0);
     expect((await listConsoleRequests(50, 0, { status: 'error', route: 'fallback-channel' })).total).toBe(0);
-    expect((await listConsoleRequests(50, 0, { status: 'error', model: 'primary-model' })).total).toBe(1);
+    expect((await listConsoleRequests(50, 0, { status: 'error', model: 'primary-model' })).total).toBe(0);
+    expect((await listConsoleRequests(50, 0, { status: 'success' })).total).toBe(1);
   });
 });
