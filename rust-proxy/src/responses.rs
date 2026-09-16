@@ -486,6 +486,11 @@ pub struct ChatSseToResponsesSse {
     started: bool,
     text_started: bool,
     thinking_started: bool,
+    /// `response.completed` 是 Responses SSE 的终结事件,全流只能发一次。
+    /// 中转上游(kiro/astream 等)常在流尾发多个带 finish_reason 的 chunk,
+    /// 再叠加流结束时的兜底补发,没有该标志就会产生重复的 completed 事件,
+    /// 导致客户端(codex)在第一个 completed 后正常关闭连接却被记为 499。
+    completed_sent: bool,
     #[expect(dead_code)]
     in_think_tag: bool,
     #[expect(dead_code)]
@@ -503,6 +508,7 @@ impl ChatSseToResponsesSse {
             started: false,
             text_started: false,
             thinking_started: false,
+            completed_sent: false,
             in_think_tag: false,
             pending_text: String::new(),
             buf: Vec::new(),
@@ -608,23 +614,28 @@ impl ChatSseToResponsesSse {
 
             // Flush on finish
             if finish_reason.is_some() {
-                if self.text_started {
-                    self.flush_text_to_output(&mut events);
+                // 只有第一个 finish chunk 产生 completed;中转上游可能在流尾
+                // 重复下发带 finish_reason 的 chunk,后续的一律忽略。
+                if !self.completed_sent {
+                    self.completed_sent = true;
+                    if self.text_started {
+                        self.flush_text_to_output(&mut events);
+                    }
+                    let usage = parsed.get("usage").unwrap_or(&Value::Null);
+                    events.push(format!(
+                        "event: response.completed\ndata: {}\n\n",
+                        json!({
+                            "type": "response.completed",
+                            "response": {
+                                "id": self.response_id,
+                                "object": "response",
+                                "status": "completed",
+                                "model": self.model,
+                                "usage": usage,
+                            }
+                        })
+                    ));
                 }
-                let usage = parsed.get("usage").unwrap_or(&Value::Null);
-                events.push(format!(
-                    "event: response.completed\ndata: {}\n\n",
-                    json!({
-                        "type": "response.completed",
-                        "response": {
-                            "id": self.response_id,
-                            "object": "response",
-                            "status": "completed",
-                            "model": self.model,
-                            "usage": usage,
-                        }
-                    })
-                ));
             }
         }
 
@@ -807,6 +818,12 @@ impl ChatSseToResponsesSse {
                 })
             ));
         }
+        // 兜底补发:仅当流中从未出现 finish_reason chunk(异常截断)时才补一个
+        // completed;正常结束(或已经补过)则不再发,避免重复的终结事件。
+        if self.completed_sent {
+            return events;
+        }
+        self.completed_sent = true;
         events.push(format!(
             "event: response.completed\ndata: {}\n\n",
             json!({
@@ -881,5 +898,71 @@ mod tests {
             ),
             "https://upstream.example/v1/chat/completions?trace=true&mode=compat"
         );
+    }
+
+    /// 中转上游在流尾发多个带 finish_reason 的 chunk 时,`response.completed`
+    /// 只能产生一次(含流结束兜底),否则客户端会在第一个 completed 后关闭
+    /// 连接,后续重复事件把请求记成 499。
+    #[test]
+    fn chat_sse_emits_single_completed_despite_repeated_finish_chunks() {
+        let mut converter = ChatSseToResponsesSse::new("gpt-5.6-sol");
+
+        let chunk = |finish: serde_json::Value, usage: serde_json::Value| {
+            format!(
+                "data: {}\n\n",
+                json!({
+                    "id": "chatcmpl-1",
+                    "choices": [{
+                        "index": 0,
+                        "delta": { "content": "hi" },
+                        "finish_reason": finish,
+                    }],
+                    "usage": usage,
+                })
+            )
+        };
+
+        let events = converter.feed(chunk(Value::Null, Value::Null).as_bytes());
+        assert_eq!(events.iter().filter(|e| e.contains("response.completed")).count(), 0);
+
+        // 第一个 finish chunk → 唯一一次 completed(带 usage)
+        let events =
+            converter.feed(chunk(json!("stop"), json!({ "total_tokens": 7718 })).as_bytes());
+        assert_eq!(events.iter().filter(|e| e.contains("response.completed")).count(), 1);
+        assert!(events.last().is_some_and(|e| e.contains("7718")));
+
+        // 第二个 finish chunk(中转上游重复下发)→ 不再产生 completed
+        let events = converter.feed(chunk(json!("stop"), Value::Null).as_bytes());
+        assert_eq!(events.iter().filter(|e| e.contains("response.completed")).count(), 0);
+
+        // 流结束兜底 → 已经发过,不补发
+        let events = converter.finish();
+        assert_eq!(events.iter().filter(|e| e.contains("response.completed")).count(), 0);
+    }
+
+    /// 上游异常截断(从未出现 finish_reason)时,finish() 兜底仍应补一个 completed,
+    /// 保证客户端能收到终结事件。
+    #[test]
+    fn chat_sse_finish_emits_completed_when_stream_never_finished() {
+        let mut converter = ChatSseToResponsesSse::new("gpt-5.6-sol");
+
+        let events = converter.feed(
+            format!(
+                "data: {}\n\n",
+                json!({
+                    "id": "chatcmpl-1",
+                    "choices": [{
+                        "index": 0,
+                        "delta": { "content": "hi" },
+                        "finish_reason": null,
+                    }],
+                })
+            )
+            .as_bytes(),
+        );
+        assert!(!events.is_empty());
+
+        let events = converter.finish();
+        assert_eq!(events.iter().filter(|e| e.contains("response.completed")).count(), 1);
     }
 }
