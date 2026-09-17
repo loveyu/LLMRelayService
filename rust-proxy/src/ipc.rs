@@ -126,6 +126,27 @@ pub enum RustToTsMessage {
         #[serde(rename = "disconnectedAt", default)]
         disconnected_at: Option<u64>,
     },
+    /// 首次被自动故障转移吞掉的 429 快照；与最终 ResponseLog 分开，避免最终成功覆盖它。
+    InitialRateLimitSnapshot {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        #[serde(rename = "routePrefix")]
+        route_prefix: String,
+        #[serde(rename = "targetUrl")]
+        target_url: String,
+        #[serde(rename = "requestModel")]
+        request_model: String,
+        #[serde(rename = "forwardedPayload")]
+        forwarded_payload: Option<String>,
+        #[serde(rename = "forwardHeaders")]
+        forward_headers: serde_json::Value,
+        #[serde(rename = "responseHeaders")]
+        response_headers: serde_json::Value,
+        #[serde(rename = "responsePayload")]
+        response_payload: Option<String>,
+        #[serde(rename = "responsePayloadTruncated")]
+        response_payload_truncated: bool,
+    },
     RequestConfigSync,
     Pong {
         timestamp: u64,

@@ -409,6 +409,7 @@ export default {
     tabRequest: "原始请求",
     tabForward: "转发请求",
     tabResponse: "响应",
+    tabRateLimit: "首次 429",
     tabCost: "成本明细",
     bottomHint: "原文逐字保存，可对照定位问题",
     copy: "复制",
@@ -470,6 +471,13 @@ export default {
     responseHeadersDesc: "上游服务返回给网关的原始 HTTP 响应头",
     noResponseHeaders: "没有响应头",
     noResponseHeadersDesc: "当前记录没有保存上游返回的响应头。",
+    rateLimitTitle: "首次 429 限流快照",
+    rateLimitDesc: "该响应被自动故障转移消费，最终响应保持在“响应”标签中。",
+    rateLimitAttempt: "限流尝试",
+    rateLimitForwardedPayload: "429 转发请求 Body",
+    rateLimitForwardedHeaders: "429 转发请求头",
+    rateLimitResponsePayload: "429 响应 Body",
+    rateLimitResponseHeaders: "429 响应头",
   },
 
   // ── Providers Page ──

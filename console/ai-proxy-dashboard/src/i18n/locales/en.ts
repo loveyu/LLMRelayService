@@ -409,6 +409,7 @@ export default {
     tabRequest: "Original Request",
     tabForward: "Forwarded Request",
     tabResponse: "Response",
+    tabRateLimit: "Initial 429",
     tabCost: "Cost",
     bottomHint: "Verbatim payload retained for cross-checking",
     copy: "Copy",
@@ -470,6 +471,13 @@ export default {
     responseHeadersDesc: "Raw HTTP response headers returned from upstream",
     noResponseHeaders: "No response headers",
     noResponseHeadersDesc: "This record does not contain upstream response headers.",
+    rateLimitTitle: "Initial 429 rate-limit snapshot",
+    rateLimitDesc: "This response was consumed by automatic failover; the final response remains in the Response tab.",
+    rateLimitAttempt: "Rate-limited attempt",
+    rateLimitForwardedPayload: "429 Forwarded Request Body",
+    rateLimitForwardedHeaders: "429 Forwarded Request Headers",
+    rateLimitResponsePayload: "429 Response Body",
+    rateLimitResponseHeaders: "429 Response Headers",
   },
 
   // ── Providers Page ──

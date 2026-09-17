@@ -929,6 +929,20 @@ async fn proxy_handler_inner(
                     // (网络错误/超时/冷却耗尽),回传这个链上最后的真实 HTTP 响应,
                     // 而不是网关自造的 502/504。
                     let captured = CachedUpstreamError::capture(upstream_resp).await;
+                    if status == 429
+                        && let Ok(cached) = captured.as_ref()
+                    {
+                        emit_initial_rate_limit_snapshot(
+                            &state,
+                            &request_id,
+                            &route,
+                            &target_url,
+                            request_model_for_log,
+                            &fwd_headers,
+                            &request_body,
+                            cached,
+                        );
+                    }
                     if failover::should_retry_same_route(&trigger)
                         && retry_count < failover_policy.retry_attempts
                     {
@@ -1828,6 +1842,44 @@ fn return_cached_upstream_error(
         None,
     );
     cached.to_response()
+}
+
+/// 429 会在自动故障转移时被消费；单独透过 IPC 保存，不能让最终 200 的响应覆盖它。
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Snapshot captures the full upstream attempt context"
+)]
+fn emit_initial_rate_limit_snapshot(
+    state: &AppState,
+    request_id: &str,
+    route: &RouteResult,
+    target_url: &str,
+    request_model: &str,
+    forward_headers: &reqwest::header::HeaderMap,
+    forwarded_body: &[u8],
+    response: &CachedUpstreamError,
+) {
+    let headers = serde_json::to_value(
+        forward_headers
+            .iter()
+            .map(|(key, value)| {
+                (key.as_str().to_string(), value.to_str().unwrap_or("").to_string())
+            })
+            .collect::<std::collections::HashMap<_, _>>(),
+    )
+    .unwrap_or_default();
+    state.ipc.send(RustToTsMessage::InitialRateLimitSnapshot {
+        request_id: request_id.to_string(),
+        route_prefix: route.channel_name.clone(),
+        target_url: target_url.to_string(),
+        request_model: request_model.to_string(),
+        forwarded_payload: (!forwarded_body.is_empty())
+            .then(|| String::from_utf8_lossy(forwarded_body).to_string()),
+        forward_headers: headers,
+        response_headers: response.headers_json(),
+        response_payload: Some(response.body_content()),
+        response_payload_truncated: false,
+    });
 }
 
 #[allow(clippy::too_many_arguments)]

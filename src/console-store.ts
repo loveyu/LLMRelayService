@@ -122,6 +122,19 @@ export interface ConsoleResponseSnapshotInput {
   response_timing?: Partial<ResponseTimingSnapshotForConsole> | null;
 }
 
+/** 首次被故障转移吞掉的 429；保留其原始转发上下文，避免最终 200 覆盖排障证据。 */
+export interface ConsoleInitialRateLimitSnapshotInput {
+  request_id: string;
+  route_prefix: string;
+  target_url: string;
+  request_model: string;
+  forwarded_payload: string | null;
+  forward_headers: Record<string, string> | null;
+  response_headers: Record<string, string> | null;
+  response_payload: string | null;
+  response_payload_truncated: boolean;
+}
+
 interface ConsoleRequestRow {
   request_id: string;
   created_at: number | string;
@@ -147,6 +160,14 @@ interface ConsoleRequestRow {
   initial_response_status: number | string | null;
   initial_response_status_text: string | null;
   initial_completed_at: number | string | null;
+  initial_rate_limit_route_prefix: string | null;
+  initial_rate_limit_target_url: string | null;
+  initial_rate_limit_request_model: string | null;
+  initial_rate_limit_forwarded_payload: string | null;
+  initial_rate_limit_forwarded_headers_json: string | null;
+  initial_rate_limit_response_headers_json: string | null;
+  initial_rate_limit_response_payload: string | null;
+  initial_rate_limit_response_payload_truncated: number | string;
   response_payload: string | null;
   response_payload_truncated: number | string;
   response_payload_truncation_reason: string | null;
@@ -201,6 +222,14 @@ export interface StoredConsoleRequest {
   initial_response_status: number | null;
   initial_response_status_text: string;
   initial_completed_at: number | null;
+  initial_rate_limit_route_prefix: string | null;
+  initial_rate_limit_target_url: string | null;
+  initial_rate_limit_request_model: string | null;
+  initial_rate_limit_forwarded_payload: string | null;
+  initial_rate_limit_forwarded_headers: Record<string, string> | null;
+  initial_rate_limit_response_headers: Record<string, string> | null;
+  initial_rate_limit_response_payload: string | null;
+  initial_rate_limit_response_payload_truncated: boolean;
   response_payload: string | null;
   response_payload_truncated: boolean;
   response_payload_truncation_reason: string | null;
@@ -1245,6 +1274,14 @@ function toCamelCaseRow(row: typeof consoleRequests.$inferSelect): ConsoleReques
     initial_response_status: row.initialResponseStatus,
     initial_response_status_text: row.initialResponseStatusText,
     initial_completed_at: row.initialCompletedAt,
+    initial_rate_limit_route_prefix: row.initialRateLimitRoutePrefix,
+    initial_rate_limit_target_url: row.initialRateLimitTargetUrl,
+    initial_rate_limit_request_model: row.initialRateLimitRequestModel,
+    initial_rate_limit_forwarded_payload: row.initialRateLimitForwardedPayload,
+    initial_rate_limit_forwarded_headers_json: row.initialRateLimitForwardedHeadersJson,
+    initial_rate_limit_response_headers_json: row.initialRateLimitResponseHeadersJson,
+    initial_rate_limit_response_payload: row.initialRateLimitResponsePayload,
+    initial_rate_limit_response_payload_truncated: row.initialRateLimitResponsePayloadTruncated,
     response_payload: row.responsePayload,
     response_payload_truncated: row.responsePayloadTruncated,
     response_payload_truncation_reason: row.responsePayloadTruncationReason,
@@ -1497,6 +1534,14 @@ async function mapRow(row: ConsoleRequestRow): Promise<StoredConsoleRequest> {
     initial_response_status: normalizeStoredInitialNumber(row.initial_response_status),
     initial_response_status_text: row.initial_response_status_text ?? '',
     initial_completed_at: normalizeStoredInitialNumber(row.initial_completed_at),
+    initial_rate_limit_route_prefix: row.initial_rate_limit_route_prefix,
+    initial_rate_limit_target_url: row.initial_rate_limit_target_url,
+    initial_rate_limit_request_model: row.initial_rate_limit_request_model,
+    initial_rate_limit_forwarded_payload: row.initial_rate_limit_forwarded_payload,
+    initial_rate_limit_forwarded_headers: parseJson<Record<string, string>>(row.initial_rate_limit_forwarded_headers_json),
+    initial_rate_limit_response_headers: parseJson<Record<string, string>>(row.initial_rate_limit_response_headers_json),
+    initial_rate_limit_response_payload: row.initial_rate_limit_response_payload,
+    initial_rate_limit_response_payload_truncated: normalizeNumber(row.initial_rate_limit_response_payload_truncated) > 0,
     response_payload: row.response_payload,
     response_payload_truncated: normalizeNumber(row.response_payload_truncated) > 0,
     response_payload_truncation_reason: row.response_payload_truncation_reason ?? null,
@@ -1731,6 +1776,31 @@ export async function saveConsoleRequest(record: ConsoleRequestSnapshotInput): P
     }
   } catch (error) {
     console.warn('[CONSOLE_DB_WRITE_ERR]', { phase: 'request', request_id: record.request_id, error });
+  }
+}
+
+/**
+ * 429 会在故障转移前被消费，不能复用最终 response 字段。只写首次快照，
+ * 同一请求后续再次限流也不覆盖，确保“初始 429 → 最终 200”可稳定排查。
+ */
+export async function saveConsoleInitialRateLimitSnapshot(
+  record: ConsoleInitialRateLimitSnapshotInput,
+): Promise<void> {
+  try {
+    await db.update(consoleRequests)
+      .set({
+        initialRateLimitRoutePrefix: sql`CASE WHEN ${consoleRequests.initialRateLimitRoutePrefix} IS NULL THEN ${record.route_prefix} ELSE ${consoleRequests.initialRateLimitRoutePrefix} END`,
+        initialRateLimitTargetUrl: sql`CASE WHEN ${consoleRequests.initialRateLimitTargetUrl} IS NULL THEN ${record.target_url} ELSE ${consoleRequests.initialRateLimitTargetUrl} END`,
+        initialRateLimitRequestModel: sql`CASE WHEN ${consoleRequests.initialRateLimitRequestModel} IS NULL THEN ${record.request_model} ELSE ${consoleRequests.initialRateLimitRequestModel} END`,
+        initialRateLimitForwardedPayload: sql`CASE WHEN ${consoleRequests.initialRateLimitRoutePrefix} IS NULL THEN ${record.forwarded_payload} ELSE ${consoleRequests.initialRateLimitForwardedPayload} END`,
+        initialRateLimitForwardedHeadersJson: sql`CASE WHEN ${consoleRequests.initialRateLimitRoutePrefix} IS NULL THEN ${serializeJson(record.forward_headers)} ELSE ${consoleRequests.initialRateLimitForwardedHeadersJson} END`,
+        initialRateLimitResponseHeadersJson: sql`CASE WHEN ${consoleRequests.initialRateLimitRoutePrefix} IS NULL THEN ${serializeJson(record.response_headers)} ELSE ${consoleRequests.initialRateLimitResponseHeadersJson} END`,
+        initialRateLimitResponsePayload: sql`CASE WHEN ${consoleRequests.initialRateLimitRoutePrefix} IS NULL THEN ${record.response_payload} ELSE ${consoleRequests.initialRateLimitResponsePayload} END`,
+        initialRateLimitResponsePayloadTruncated: sql`CASE WHEN ${consoleRequests.initialRateLimitRoutePrefix} IS NULL THEN ${record.response_payload_truncated ? 1 : 0} ELSE ${consoleRequests.initialRateLimitResponsePayloadTruncated} END`,
+      })
+      .where(eq(consoleRequests.requestId, record.request_id));
+  } catch (error) {
+    console.warn('[CONSOLE_DB_WRITE_ERR]', { phase: 'initial_rate_limit_snapshot', request_id: record.request_id, error });
   }
 }
 

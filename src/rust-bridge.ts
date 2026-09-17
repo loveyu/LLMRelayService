@@ -24,6 +24,7 @@ type TsToRustMessage =
 type RustToTsMessage =
   | { type: 'request_log' } & RustRequestLog
   | { type: 'response_log' } & RustResponseLog
+  | { type: 'initial_rate_limit_snapshot' } & RustInitialRateLimitSnapshot
   | { type: 'request_config_sync' }
   | { type: 'pong'; timestamp: number };
 
@@ -143,6 +144,18 @@ interface RustResponseLog {
   responsePayload: string | null;
   disconnectSource?: 'client' | 'upstream' | null;
   disconnectedAt?: number | null;
+}
+
+interface RustInitialRateLimitSnapshot {
+  requestId: string;
+  routePrefix: string;
+  targetUrl: string;
+  requestModel: string;
+  forwardedPayload: string | null;
+  forwardHeaders: Record<string, string>;
+  responseHeaders: Record<string, string>;
+  responsePayload: string | null;
+  responsePayloadTruncated: boolean;
 }
 
 // ── Frame codec (mirrors Rust FrameCodec) ──────────────────────────────────

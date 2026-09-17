@@ -68,10 +68,28 @@ async function handleMessage(frame: Buffer) {
       case 'response_log':
         await saveResponseLog(msg);
         break;
+      case 'initial_rate_limit_snapshot':
+        await saveInitialRateLimitSnapshot(msg);
+        break;
     }
   } catch (err: any) {
     console.warn('[log-writer] Failed to save log:', err?.message ?? err);
   }
+}
+
+async function saveInitialRateLimitSnapshot(msg: any) {
+  const { saveConsoleInitialRateLimitSnapshot } = await import('./console-store');
+  await saveConsoleInitialRateLimitSnapshot({
+    request_id: msg.requestId,
+    route_prefix: msg.routePrefix,
+    target_url: msg.targetUrl,
+    request_model: msg.requestModel,
+    forwarded_payload: msg.forwardedPayload ?? null,
+    forward_headers: msg.forwardHeaders ?? {},
+    response_headers: msg.responseHeaders ?? {},
+    response_payload: msg.responsePayload ?? null,
+    response_payload_truncated: msg.responsePayloadTruncated ?? false,
+  });
 }
 
 async function saveRequestLog(msg: any) {

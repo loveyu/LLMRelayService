@@ -7,7 +7,7 @@ import { Hono } from 'hono';
 import { proxy } from 'hono/proxy';
 import { DEFAULT_OPENAI_RESPONSES_MODE, ensureProviderConfigsLoaded, getModels, resolveRoute, resolveRoutesByModel, resolveRoutesForAnyModelFallback, resolveRoutesForFallbackModels, type RouteResult } from './config';
 import { trackPendingConsoleRequestWrite } from './console-log-tasks';
-import { saveConsoleRequest, type ForwardHeadersSummary, type PayloadSummaryForConsole } from './console-store';
+import { saveConsoleInitialRateLimitSnapshot, saveConsoleRequest, type ForwardHeadersSummary, type PayloadSummaryForConsole } from './console-store';
 import { registerConsoleRoutes } from './console-ui';
 import { registerOpenApiRoutes } from './openapi-routes';
 import { buildForwardHeadersForProvider, prepareRequestForProvider, type UpstreamType, type UsageData, parseUsageForProvider, summarizePayloadForProvider, detectRequestKindForProvider } from './providers';
@@ -1047,6 +1047,39 @@ async function handleProxyRequest(c: any): Promise<Response> {
         target_url: attempt.upstreamTargetUrl,
         status: upstreamResponse.status,
       });
+      if (upstreamResponse.status === 429) {
+        // 当前 TS 转发路径此前只会持久化最终一次尝试；先入库当前请求，再保存
+        // 被 failover 消费的 429 快照，才能让最终 200 的详情仍可查看限流原文。
+        saveRequestLogForAttempt({
+          route,
+          upstreamTargetUrl: attempt.upstreamTargetUrl,
+          requestModel: attempt.requestModel,
+          forwardedPayloadForStore: attempt.forwardedPayloadForStore,
+          forwardedSummaryForLog: attempt.forwardedSummaryForLog,
+          headersSummary: attempt.headersSummary,
+          failoverFrom: isFallbackRoute(route) ? describeRoute(initialRoute) : null,
+          failoverChain: [...failedRouteChain],
+          failoverReason: reason,
+          retryAttempt: retryIndexForRoute,
+        });
+        const responsePayloadForRecord = await upstreamResponse.clone().text().catch(() => '');
+        const truncatedResponse = truncatePayloadForLog(responsePayloadForRecord);
+        trackPendingConsoleRequestWrite(requestId, () => saveConsoleInitialRateLimitSnapshot({
+          request_id: requestId,
+          route_prefix: route.channelName,
+          target_url: attempt.upstreamTargetUrl,
+          request_model: attempt.requestModel,
+          forwarded_payload: attempt.forwardedPayloadForStore,
+          forward_headers: attempt.headersSummary as unknown as Record<string, string>,
+          response_headers: (() => {
+            const headers: Record<string, string> = {};
+            upstreamResponse.headers.forEach((value, key) => { headers[key] = value; });
+            return headers;
+          })(),
+          response_payload: truncatedResponse.payload,
+          response_payload_truncated: truncatedResponse.truncated,
+        }));
+      }
       await upstreamResponse.body?.cancel().catch(() => undefined);
       if (!failedRouteChain.includes(describeRoute(route))) {
         failedRouteChain.push(describeRoute(route));

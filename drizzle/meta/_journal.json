@@ -99,6 +99,13 @@
       "when": 1789375995406,
       "tag": "0013_majestic_kitty_pryde",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789628909994,
+      "tag": "0014_sweet_nova",
+      "breakpoints": true
     }
   ]
 }

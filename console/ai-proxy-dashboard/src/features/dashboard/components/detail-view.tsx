@@ -322,6 +322,10 @@ export function DetailView({
   const originalHeadersText = JSON.stringify(record.original_headers ?? {}, null, 2)
   const forwardHeadersText = JSON.stringify(record.forward_headers ?? {}, null, 2)
   const responseHeadersText = JSON.stringify(record.response_headers ?? {}, null, 2)
+  const hasInitialRateLimitSnapshot = record.initial_response_status === 429
+    && Boolean(record.initial_rate_limit_route_prefix)
+  const initialRateLimitForwardHeadersText = JSON.stringify(record.initial_rate_limit_forwarded_headers ?? {}, null, 2)
+  const initialRateLimitResponseHeadersText = JSON.stringify(record.initial_rate_limit_response_headers ?? {}, null, 2)
   const sseSegments = timing.has_streaming_content
     ? extractReadableSseSegments(record.response_payload)
     : { reasoning: "", content: "" }
@@ -465,6 +469,15 @@ export function DetailView({
       >
         {t("detail.tabResponse")}
       </TabsTrigger>
+      {hasInitialRateLimitSnapshot ? (
+        <TabsTrigger
+          value="rate-limit"
+          className="mr-4 h-auto flex-none px-0.5 py-[11px] text-[13px] font-medium text-muted-foreground after:bottom-0 data-[state=active]:font-bold data-[state=active]:text-foreground sm:mr-6"
+          style={{ '--tabs-line-color': 'var(--primary)', '--tabs-line-bottom': '0px' } as React.CSSProperties}
+        >
+          {t("detail.tabRateLimit")}
+        </TabsTrigger>
+      ) : null}
       <TabsTrigger
         value="cost"
         className="mr-4 h-auto flex-none px-0.5 py-[11px] text-[13px] font-medium text-muted-foreground after:bottom-0 data-[state=active]:font-bold data-[state=active]:text-foreground sm:mr-6"
@@ -565,6 +578,56 @@ export function DetailView({
           />
         </div>
       </TabsContent>
+
+      {hasInitialRateLimitSnapshot ? (
+        <TabsContent value="rate-limit" className="mt-0">
+          <div className="space-y-3">
+            <Alert>
+              <AlertTitle>{t("detail.rateLimitTitle")}</AlertTitle>
+              <AlertDescription>{t("detail.rateLimitDesc")}</AlertDescription>
+            </Alert>
+            <Card size="sm">
+              <CardHeader className="border-b border-border/60">
+                <CardTitle>{t("detail.rateLimitAttempt")}</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-2 pt-3 text-xs sm:grid-cols-2">
+                <div className="text-muted-foreground">{t("detail.routePrefix")}</div>
+                <div className="font-mono text-foreground">{record.initial_rate_limit_route_prefix}</div>
+                <div className="text-muted-foreground">{t("detail.requestModel")}</div>
+                <div className="break-all font-mono text-foreground">{record.initial_rate_limit_request_model}</div>
+                <div className="text-muted-foreground">{t("detail.targetUrl")}</div>
+                <div className="break-all font-mono text-foreground">{record.initial_rate_limit_target_url}</div>
+              </CardContent>
+            </Card>
+            <PayloadPanel
+              title={t("detail.rateLimitForwardedPayload")}
+              payload={record.initial_rate_limit_forwarded_payload}
+              truncated={false}
+            />
+            <ReadonlyTextCard
+              title={t("detail.rateLimitForwardedHeaders")}
+              description={t("detail.forwardedHeadersDesc")}
+              value={initialRateLimitForwardHeadersText}
+              emptyTitle={t("detail.noForwardedHeaders")}
+              emptyDescription={t("detail.noForwardedHeadersDesc")}
+              code
+            />
+            <PayloadPanel
+              title={t("detail.rateLimitResponsePayload")}
+              payload={record.initial_rate_limit_response_payload}
+              truncated={record.initial_rate_limit_response_payload_truncated}
+            />
+            <ReadonlyTextCard
+              title={t("detail.rateLimitResponseHeaders")}
+              description={t("detail.responseHeadersDesc")}
+              value={initialRateLimitResponseHeadersText}
+              emptyTitle={t("detail.noResponseHeaders")}
+              emptyDescription={t("detail.noResponseHeadersDesc")}
+              code
+            />
+          </div>
+        </TabsContent>
+      ) : null}
 
       {/* Cost Tab */}
       <TabsContent value="cost" className="mt-0">

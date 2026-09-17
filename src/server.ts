@@ -282,6 +282,21 @@ import('./rust-process').then(({ startRustProxy: startRust, stopRustProxy }) => 
             });
             break;
           }
+          case 'initial_rate_limit_snapshot': {
+            const { saveConsoleInitialRateLimitSnapshot } = await import('./console-store');
+            await saveConsoleInitialRateLimitSnapshot({
+              request_id: msg.requestId,
+              route_prefix: msg.routePrefix,
+              target_url: msg.targetUrl,
+              request_model: msg.requestModel,
+              forwarded_payload: msg.forwardedPayload ?? null,
+              forward_headers: msg.forwardHeaders ?? {},
+              response_headers: msg.responseHeaders ?? {},
+              response_payload: msg.responsePayload ?? null,
+              response_payload_truncated: msg.responsePayloadTruncated ?? false,
+            });
+            break;
+          }
         }
       }).catch((err: any) => {
         console.warn('[rust-bridge] Failed to save log:', err?.message ?? err);
