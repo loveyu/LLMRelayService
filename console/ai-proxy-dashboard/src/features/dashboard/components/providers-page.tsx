@@ -1136,22 +1136,27 @@ export function ProvidersPage({
             {/* Models as chips */}
             <Field>
               <FieldLabel>{t("providers.modelsLabel")}</FieldLabel>
+              <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 text-xs text-muted-foreground sm:grid">
+                <span>对外模型</span>
+                <span>实际上游模型</span>
+              </div>
               <div className="space-y-2">
                 {formState.models.filter((r) => r.model.trim() !== "").map((row) => (
                   <div
                     key={row.id}
-                    className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2"
+                    className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
                   >
-                    <Input value={row.model} aria-label="对外模型" onChange={(event) => setFormState((current) => ({ ...current, models: current.models.map((item) => item.id === row.id ? { ...item, model: event.target.value } : item) }))} />
-                    <span className="text-xs text-muted-foreground">→</span>
+                    <Input value={row.model} placeholder="对外模型" aria-label="对外模型" onChange={(event) => setFormState((current) => ({ ...current, models: current.models.map((item) => item.id === row.id ? { ...item, model: event.target.value } : item) }))} />
                     <Input value={row.upstreamModel} placeholder="实际上游模型（留空则相同）" aria-label="实际上游模型" onChange={(event) => setFormState((current) => ({ ...current, models: current.models.map((item) => item.id === row.id ? { ...item, upstreamModel: event.target.value } : item) }))} />
+                    <div className="flex items-center justify-end gap-1">
                     {activeProvider?.enabled ? (
                       <RecentHttpStatusDots
                         label={t("providers.recentModelHttp", { model: row.model })}
                         points={row.recentHttpStatuses}
                       />
                     ) : null}
-                    <Button type="button" variant="ghost" size="icon" onClick={() => removeModelRow(row.id)} aria-label={t("providers.removeModel")}><X className="size-3" /></Button>
+                    <Button type="button" variant="ghost" size="xs" className="text-destructive hover:text-destructive" onClick={() => removeModelRow(row.id)}><X data-icon="inline-start" />删除</Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1603,22 +1608,27 @@ export function ProvidersPage({
 
               <Field>
                 <FieldLabel>{t("providers.modelsLabel")}</FieldLabel>
+                <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 text-xs text-muted-foreground sm:grid">
+                  <span>对外模型</span>
+                  <span>实际上游模型</span>
+                </div>
                 <div className="space-y-2">
                   {formState.models.filter((r) => r.model.trim() !== "").map((row) => (
                     <div
                       key={row.id}
-                      className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2"
+                      className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
                     >
-                      <Input value={row.model} aria-label="对外模型" onChange={(event) => setFormState((current) => ({ ...current, models: current.models.map((item) => item.id === row.id ? { ...item, model: event.target.value } : item) }))} />
-                      <span className="text-xs text-muted-foreground">→</span>
+                      <Input value={row.model} placeholder="对外模型" aria-label="对外模型" onChange={(event) => setFormState((current) => ({ ...current, models: current.models.map((item) => item.id === row.id ? { ...item, model: event.target.value } : item) }))} />
                       <Input value={row.upstreamModel} placeholder="实际上游模型（留空则相同）" aria-label="实际上游模型" onChange={(event) => setFormState((current) => ({ ...current, models: current.models.map((item) => item.id === row.id ? { ...item, upstreamModel: event.target.value } : item) }))} />
+                      <div className="flex items-center justify-end gap-1">
                       {dialogMode === "edit" && activeProvider?.enabled ? (
                         <RecentHttpStatusDots
                           label={t("providers.recentModelHttp", { model: row.model })}
                           points={row.recentHttpStatuses}
                         />
                       ) : null}
-                      <Button type="button" variant="ghost" size="icon" onClick={() => removeModelRow(row.id)} aria-label={t("providers.removeModel")}><X className="size-3" /></Button>
+                      <Button type="button" variant="ghost" size="xs" className="text-destructive hover:text-destructive" onClick={() => removeModelRow(row.id)}><X data-icon="inline-start" />删除</Button>
+                      </div>
                     </div>
                   ))}
                   {formState.models.filter((r) => r.model.trim() !== "").length === 0 ? (
