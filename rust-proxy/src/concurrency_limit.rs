@@ -15,7 +15,7 @@ struct ActiveCounters {
 }
 
 pub struct ConcurrencyPermit {
-    rule_id: String,
+    rule_id: Option<String>,
     channel: String,
     model: String,
     active: Arc<Mutex<ActiveCounters>>,
@@ -24,10 +24,13 @@ pub struct ConcurrencyPermit {
 impl Drop for ConcurrencyPermit {
     fn drop(&mut self) {
         let Ok(mut active) = self.active.lock() else { return };
-        let Some(value) = active.rules.get_mut(&self.rule_id) else { return };
-        *value = value.saturating_sub(1);
-        if *value == 0 {
-            active.rules.remove(&self.rule_id);
+        if let Some(rule_id) = self.rule_id.as_ref()
+            && let Some(value) = active.rules.get_mut(rule_id)
+        {
+            *value = value.saturating_sub(1);
+            if *value == 0 {
+                active.rules.remove(rule_id);
+            }
         }
         decrement(&mut active.channels, &self.channel);
         decrement(&mut active.models, &(self.channel.clone(), self.model.clone()));
@@ -56,11 +59,24 @@ impl ConcurrencyLimits {
         *active.channels.entry(channel.to_string()).or_default() += 1;
         *active.models.entry((channel.to_string(), model.to_string())).or_default() += 1;
         Some(ConcurrencyPermit {
-            rule_id: rule_id.to_string(),
+            rule_id: Some(rule_id.to_string()),
             channel: channel.to_string(),
             model: model.to_string(),
             active: Arc::clone(&self.active),
         })
+    }
+
+    /// 未绑定规则的请求也纳入实时观测，但不参与任何上限判断。
+    pub fn track(&self, channel: &str, model: &str) -> ConcurrencyPermit {
+        let mut active = self.active.lock().expect("concurrency counters lock");
+        *active.channels.entry(channel.to_string()).or_default() += 1;
+        *active.models.entry((channel.to_string(), model.to_string())).or_default() += 1;
+        ConcurrencyPermit {
+            rule_id: None,
+            channel: channel.to_string(),
+            model: model.to_string(),
+            active: Arc::clone(&self.active),
+        }
     }
 
     pub fn snapshot(

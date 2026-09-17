@@ -362,6 +362,10 @@ async fn proxy_handler_inner(
             );
             concurrency_permit = None;
         }
+        if concurrency_permit.is_none() {
+            concurrency_permit =
+                Some(state.concurrency_limits.track(&route.channel_name, route_model));
+        }
 
         let t_total = Instant::now();
 
