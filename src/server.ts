@@ -225,6 +225,7 @@ import('./rust-process').then(({ startRustProxy: startRust, stopRustProxy }) => 
               path: msg.path,
               target_url: msg.targetUrl,
               request_model: msg.requestModel,
+              upstream_request_model: msg.upstreamRequestModel ?? null,
               original_payload: msg.originalPayload ?? null,
               original_payload_truncated: false,
               original_summary: null,

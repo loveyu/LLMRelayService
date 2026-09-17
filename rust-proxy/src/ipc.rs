@@ -45,6 +45,8 @@ pub enum RustToTsMessage {
         target_url: String,
         #[serde(rename = "requestModel")]
         request_model: String,
+        #[serde(rename = "upstreamRequestModel", default)]
+        upstream_request_model: Option<String>,
         #[serde(rename = "originalPayload")]
         original_payload: Option<String>,
         #[serde(rename = "forwardedPayload")]

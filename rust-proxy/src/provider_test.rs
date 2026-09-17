@@ -166,10 +166,22 @@ pub async fn test_provider_handler(
                     .into_response();
             }
         };
+        // 控制台传入的是对外模型，探测时必须改为该渠道配置的实际上游模型。
         let model = body
             .model
             .clone()
-            .or_else(|| entry.models.as_ref().and_then(|m| m.first().map(|m| m.model.clone())));
+            .and_then(|requested| {
+                entry.models.as_ref().and_then(|models| {
+                    models.iter().find(|candidate| candidate.model == requested).map(|candidate| {
+                        candidate.upstream_model.clone().unwrap_or(candidate.model.clone())
+                    })
+                })
+            })
+            .or_else(|| {
+                entry.models.as_ref().and_then(|m| {
+                    m.first().map(|m| m.upstream_model.clone().unwrap_or_else(|| m.model.clone()))
+                })
+            });
         let model = match model {
             Some(m) => m,
             None => {
@@ -776,6 +788,7 @@ fn emit_request_log(
     let path = format!("/admin/providers/{channel_name}/test");
     let tu = test_url.to_string();
     let rm = test_model.to_string();
+    let urm = test_model.to_string();
     let fp = build_probe_body(test_model, starts_streaming).to_string();
     let fh = build_forward_headers_value(auth_header, auth_value, is_anthropic);
 
@@ -790,6 +803,7 @@ fn emit_request_log(
             url: tu.clone(),
             target_url: tu,
             request_model: rm,
+            upstream_request_model: Some(urm),
             original_payload: None,
             forwarded_payload: Some(fp),
             original_headers: json!({}),

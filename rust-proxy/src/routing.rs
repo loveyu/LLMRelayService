@@ -12,6 +12,9 @@ pub struct RouteResult {
     pub claude_code_compat: bool,
     pub concurrency_rule_id: Option<String>,
     pub resolved_model: Option<String>,
+    /// Provider-local mapping target. This intentionally remains separate from
+    /// `resolved_model`: aliases may rewrite response model names, mappings never do.
+    pub upstream_request_model: Option<String>,
     pub virtual_model: Option<String>,
     pub return_real_model: bool,
     pub responses_mode: Option<OpenAiResponsesMode>,
@@ -72,6 +75,7 @@ fn strip_type_forced_prefix(path: &str) -> &str {
 pub fn resolve_explicit_route(
     pathname: &str,
     search: &str,
+    model: &str,
     providers: &std::collections::HashMap<String, ConfigEntry>,
 ) -> Option<RouteResult> {
     let parsed = parse_explicit_route_path(pathname)?;
@@ -79,7 +83,17 @@ pub fn resolve_explicit_route(
     if !entry.enabled {
         return None;
     }
-    Some(build_route_result(&parsed.channel_name, entry, &parsed.remaining_path, search))
+    // 显式渠道同样只接受配置的对外模型；不能借此绕过映射直接发送实际上游模型。
+    let mapped_model = if model.is_empty() {
+        None
+    } else {
+        let configured =
+            entry.models.as_ref()?.iter().find(|candidate| candidate.model == model)?;
+        configured.upstream_model.clone()
+    };
+    let mut route = build_route_result(&parsed.channel_name, entry, &parsed.remaining_path, search);
+    route.upstream_request_model = mapped_model;
+    Some(route)
 }
 
 struct ParsedExplicitRoute {
@@ -186,7 +200,13 @@ fn resolve_explicit_target_route(
         })
         .unwrap_or_else(|| target.provider.clone());
 
-    Some(build_route_result(&channel_name, entry, pathname, search))
+    let mut route = build_route_result(&channel_name, entry, pathname, search);
+    route.upstream_request_model = entry
+        .models
+        .as_ref()
+        .and_then(|models| models.iter().find(|candidate| candidate.model == target.model))
+        .and_then(|candidate| candidate.upstream_model.clone());
+    Some(route)
 }
 
 fn resolve_provider_by_ref<'a>(
@@ -244,6 +264,7 @@ pub fn build_route_result(
         claude_code_compat: entry.claude_code_compat,
         concurrency_rule_id: entry.concurrency_rule_id.clone(),
         resolved_model: None,
+        upstream_request_model: None,
         virtual_model: None,
         return_real_model: false,
         responses_mode: entry.effective_responses_mode(),
@@ -276,6 +297,11 @@ fn find_routes_by_model(
         .map(|(name, entry)| {
             let mut route = build_route_result(name, entry, pathname, search);
             route.resolved_model = Some(model.to_string());
+            route.upstream_request_model = entry
+                .models
+                .as_ref()
+                .and_then(|models| models.iter().find(|candidate| candidate.model == model))
+                .and_then(|candidate| candidate.upstream_model.clone());
             route
         })
         .collect()
@@ -299,6 +325,7 @@ mod tests {
             auth: None,
             models: Some(vec![ModelConfig {
                 model: model.to_string(),
+                upstream_model: None,
                 context: None,
                 extra: serde_json::Map::new(),
             }]),
@@ -310,6 +337,7 @@ mod tests {
             provider_uuid: None,
             auto_sync_models: false,
             claude_code_compat: false,
+            concurrency_rule_id: None,
         }
     }
 
@@ -321,6 +349,7 @@ mod tests {
             auth: None,
             models: Some(vec![ModelConfig {
                 model: model.to_string(),
+                upstream_model: None,
                 context: None,
                 extra: serde_json::Map::new(),
             }]),
@@ -332,6 +361,7 @@ mod tests {
             provider_uuid: None,
             auto_sync_models: false,
             claude_code_compat: false,
+            concurrency_rule_id: None,
         }
     }
 
@@ -376,6 +406,26 @@ mod tests {
         assert_eq!(routes[0].resolved_model.as_deref(), Some("glm-5.3"));
         assert_eq!(routes[0].virtual_model.as_deref(), Some("claude-code"));
         assert_eq!(routes[0].target_url, "https://enabled.example/v1/messages");
+    }
+
+    #[test]
+    fn provider_model_mapping_keeps_public_route_name_and_sets_upstream_model() {
+        let mut provider = openai_entry("https://upstream.example/v1", "public-model");
+        provider.models.as_mut().unwrap()[0].upstream_model = Some("actual-model".to_string());
+        let providers = std::collections::HashMap::from([("mapped".to_string(), provider)]);
+        let routes = resolve_routes_by_model(
+            "/v1/chat/completions",
+            "",
+            "public-model",
+            None,
+            &providers,
+            &std::collections::HashMap::new(),
+        );
+
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].resolved_model.as_deref(), Some("public-model"));
+        assert_eq!(routes[0].upstream_request_model.as_deref(), Some("actual-model"));
+        assert!(routes[0].virtual_model.is_none());
     }
 
     /// Regression: `/anthropic/` type-forced prefix must not be doubled onto an

@@ -43,6 +43,13 @@
       "when": 1789629668245,
       "tag": "0005_safe_dracula",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789634381426,
+      "tag": "0006_material_alice",
+      "breakpoints": true
     }
   ]
 }

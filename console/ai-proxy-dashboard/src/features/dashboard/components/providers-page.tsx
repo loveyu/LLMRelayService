@@ -260,6 +260,7 @@ type DialogMode = "create" | "edit"
 type ModelRowState = {
   id: string
   model: string
+  upstreamModel: string
   recentHttpStatuses?: RecentHttpStatusPoint[]
 }
 
@@ -295,10 +296,11 @@ function generateId(): string {
 }
 
 function createModelRow(model?: ProviderModelInfo): ModelRowState {
-  const { model: modelName = "", recentHttpStatuses } = model ?? {}
+  const { model: modelName = "", upstreamModel = "", recentHttpStatuses } = model ?? {}
   return {
     id: generateId(),
     model: modelName,
+    upstreamModel,
     recentHttpStatuses,
   }
 }
@@ -366,7 +368,8 @@ function buildModels(rows: ModelRowState[]): ProviderModelInfo[] {
     .map((row) => {
       const model = row.model.trim()
       if (!model) return null
-      return { model } as ProviderModelInfo
+      const upstreamModel = row.upstreamModel.trim()
+      return { model, ...(upstreamModel && upstreamModel !== model ? { upstreamModel } : {}) } as ProviderModelInfo
     })
     .filter((item): item is ProviderModelInfo => item !== null)
 
@@ -1133,30 +1136,26 @@ export function ProvidersPage({
             {/* Models as chips */}
             <Field>
               <FieldLabel>{t("providers.modelsLabel")}</FieldLabel>
-              <div className="flex flex-wrap gap-1.5 empty:hidden">
+              <div className="space-y-2">
                 {formState.models.filter((r) => r.model.trim() !== "").map((row) => (
-                  <span
+                  <div
                     key={row.id}
-                    className="inline-flex items-center gap-1 rounded-lg border border-[#cfe8ea] bg-[#eef8f8] px-2.5 py-1 text-xs text-[#0c7c86]"
+                    className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2"
                   >
-                    {row.model}
+                    <Input value={row.model} aria-label="对外模型" onChange={(event) => setFormState((current) => ({ ...current, models: current.models.map((item) => item.id === row.id ? { ...item, model: event.target.value } : item) }))} />
+                    <span className="text-xs text-muted-foreground">→</span>
+                    <Input value={row.upstreamModel} placeholder="实际上游模型（留空则相同）" aria-label="实际上游模型" onChange={(event) => setFormState((current) => ({ ...current, models: current.models.map((item) => item.id === row.id ? { ...item, upstreamModel: event.target.value } : item) }))} />
                     {activeProvider?.enabled ? (
                       <RecentHttpStatusDots
                         label={t("providers.recentModelHttp", { model: row.model })}
                         points={row.recentHttpStatuses}
                       />
                     ) : null}
-                    <button
-                      type="button"
-                      className="-mr-1 rounded p-1 text-[#0c7c86]/60 transition-colors hover:bg-[#0c7c86]/10 hover:text-destructive"
-                      onClick={() => removeModelRow(row.id)}
-                      aria-label={t("providers.removeModel")}
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </span>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeModelRow(row.id)} aria-label={t("providers.removeModel")}><X className="size-3" /></Button>
+                  </div>
                 ))}
               </div>
+              <FieldDescription>左侧为对用户公开的模型名；右侧仅用于本渠道的上游请求，响应中的模型字段不会改写。</FieldDescription>
               <ModelAddControl
                 addLabel={t("providers.addButton")}
                 syncLabel={t("providers.syncButton")}
@@ -1604,28 +1603,23 @@ export function ProvidersPage({
 
               <Field>
                 <FieldLabel>{t("providers.modelsLabel")}</FieldLabel>
-                <div className="flex flex-wrap items-center gap-1.5">
+                <div className="space-y-2">
                   {formState.models.filter((r) => r.model.trim() !== "").map((row) => (
-                    <span
+                    <div
                       key={row.id}
-                      className="inline-flex items-center gap-1 rounded-lg border border-[#cfe8ea] bg-[#eef8f8] px-2.5 py-1 text-xs text-[#0c7c86]"
+                      className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2"
                     >
-                      {row.model}
+                      <Input value={row.model} aria-label="对外模型" onChange={(event) => setFormState((current) => ({ ...current, models: current.models.map((item) => item.id === row.id ? { ...item, model: event.target.value } : item) }))} />
+                      <span className="text-xs text-muted-foreground">→</span>
+                      <Input value={row.upstreamModel} placeholder="实际上游模型（留空则相同）" aria-label="实际上游模型" onChange={(event) => setFormState((current) => ({ ...current, models: current.models.map((item) => item.id === row.id ? { ...item, upstreamModel: event.target.value } : item) }))} />
                       {dialogMode === "edit" && activeProvider?.enabled ? (
                         <RecentHttpStatusDots
                           label={t("providers.recentModelHttp", { model: row.model })}
                           points={row.recentHttpStatuses}
                         />
                       ) : null}
-                      <button
-                        type="button"
-                        className="-mr-1 rounded p-1 text-[#0c7c86]/60 transition-colors hover:bg-[#0c7c86]/10 hover:text-destructive"
-                        onClick={() => removeModelRow(row.id)}
-                        aria-label={t("providers.removeModel")}
-                      >
-                        <X className="size-3" />
-                      </button>
-                    </span>
+                      <Button type="button" variant="ghost" size="icon" onClick={() => removeModelRow(row.id)} aria-label={t("providers.removeModel")}><X className="size-3" /></Button>
+                    </div>
                   ))}
                   {formState.models.filter((r) => r.model.trim() !== "").length === 0 ? (
                     <span className="rounded-lg border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
@@ -1633,6 +1627,7 @@ export function ProvidersPage({
                     </span>
                   ) : null}
                 </div>
+                <FieldDescription>左侧为对外模型，右侧为实际发送到上游的模型；留空时两者相同，响应模型保持上游原样。</FieldDescription>
                 <ModelAddControl
                   addLabel={t("providers.addButton")}
                   syncLabel={t("providers.syncButton")}

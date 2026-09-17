@@ -105,6 +105,7 @@ interface RustRequestLog {
   url: string;
   targetUrl: string;
   requestModel: string;
+  upstreamRequestModel?: string | null;
   originalPayload: string | null;
   forwardedPayload: string | null;
   originalHeaders: Record<string, string>;

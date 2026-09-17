@@ -88,6 +88,7 @@ export interface ConsoleRequestSnapshotInput {
   path: string;
   target_url: string;
   request_model: string;
+  upstream_request_model?: string | null;
   api_key_id?: string | null;
   api_key_name?: string | null;
   original_payload: string | null;
@@ -144,6 +145,7 @@ interface ConsoleRequestRow {
   path: string;
   target_url: string;
   request_model: string;
+  upstream_request_model: string | null;
   api_key_id: string | null;
   api_key_name: string | null;
   original_payload: string | null;
@@ -208,6 +210,7 @@ export interface StoredConsoleRequest {
   path: string;
   target_url: string;
   request_model: string;
+  upstream_request_model: string | null;
   original_payload: string | null;
   original_payload_truncated: boolean;
   original_summary: PayloadSummaryForConsole | null;
@@ -270,6 +273,7 @@ export interface ConsoleRequestListItem {
   path: string;
   target_url: string;
   request_model: string;
+  upstream_request_model: string | null;
   response_status: number | null;
   response_status_text: string;
   initial_response_status: number | null;
@@ -297,6 +301,7 @@ type ConsoleRequestListRow = Pick<ConsoleRequestRow,
   | 'path'
   | 'target_url'
   | 'request_model'
+  | 'upstream_request_model'
   | 'api_key_id'
   | 'api_key_name'
   | 'forwarded_summary_json'
@@ -1102,6 +1107,7 @@ async function upsertRequest(data: {
   path: string;
   target_url: string;
   request_model: string;
+  upstream_request_model: string | null;
   original_payload: string | null;
   original_payload_truncated: number;
   original_summary_json: string | null;
@@ -1127,6 +1133,7 @@ async function upsertRequest(data: {
     path: data.path,
     targetUrl: data.target_url,
     requestModel: data.request_model,
+    upstreamRequestModel: data.upstream_request_model ?? null,
     originalPayload: data.original_payload,
     originalPayloadTruncated: data.original_payload_truncated,
     originalSummaryJson: data.original_summary_json,
@@ -1150,6 +1157,7 @@ async function upsertRequest(data: {
       path: sql`excluded.path`,
       targetUrl: sql`excluded.target_url`,
       requestModel: sql`excluded.request_model`,
+      upstreamRequestModel: sql`excluded.upstream_request_model`,
       originalPayload: sql`excluded.original_payload`,
       originalPayloadTruncated: sql`excluded.original_payload_truncated`,
       originalSummaryJson: sql`excluded.original_summary_json`,
@@ -1258,6 +1266,7 @@ function toCamelCaseRow(row: typeof consoleRequests.$inferSelect): ConsoleReques
     path: row.path,
     target_url: row.targetUrl,
     request_model: row.requestModel,
+    upstream_request_model: row.upstreamRequestModel,
     api_key_id: row.apiKeyId,
     api_key_name: row.apiKeyName,
     original_payload: row.originalPayload,
@@ -1461,7 +1470,7 @@ function mapListRow(
   const initialCompletedAt = normalizeStoredInitialNumber(row.initial_completed_at);
   const createdAt = normalizeNumber(row.created_at);
   const upstreamType = row.upstream_type === 'openai' ? 'openai' : 'anthropic';
-  const responseUsage = withCalculatedUsage(row.request_model, toUsage(row), upstreamType, row.route_prefix, overrides, row.cost_pricing_json);
+  const responseUsage = withCalculatedUsage(row.upstream_request_model ?? row.request_model, toUsage(row), upstreamType, row.route_prefix, overrides, row.cost_pricing_json);
   const sourceRequestType = ((row as any).source_request_type ?? 'unknown') as DetectedRequestKind;
   // 列表恒展示最终状态/渠道/耗时,与详情口径一致;"初始 429 → 回退成功"的
   // 请求按成功显示(其 failover_from/chain 字段仍保留回退轨迹)。
@@ -1479,6 +1488,7 @@ function mapListRow(
     path: row.path,
     target_url: row.target_url,
     request_model: row.request_model,
+    upstream_request_model: row.upstream_request_model ?? null,
     response_status: finalStatus,
     response_status_text: row.response_status_text ?? '',
     initial_response_status: initialStatus,
@@ -1509,7 +1519,7 @@ async function mapRow(row: ConsoleRequestRow): Promise<StoredConsoleRequest> {
     listModelMetadataOverrides(),
     ensurePricingLoadedSafely({ request_id: requestId }),
   ]);
-  const responseUsage = withCalculatedUsage(row.request_model, toUsage(row), upstreamType, row.route_prefix, overrides, row.cost_pricing_json);
+  const responseUsage = withCalculatedUsage(row.upstream_request_model ?? row.request_model, toUsage(row), upstreamType, row.route_prefix, overrides, row.cost_pricing_json);
 
   return {
     request_id: requestId,
@@ -1520,6 +1530,7 @@ async function mapRow(row: ConsoleRequestRow): Promise<StoredConsoleRequest> {
     path: row.path,
     target_url: row.target_url,
     request_model: row.request_model,
+    upstream_request_model: row.upstream_request_model ?? null,
     original_payload: row.original_payload,
     original_payload_truncated: normalizeNumber(row.original_payload_truncated) > 0,
     original_summary: parseJson<PayloadSummaryForConsole>(row.original_summary_json),
@@ -1708,6 +1719,7 @@ export async function saveConsoleRequest(record: ConsoleRequestSnapshotInput): P
       path: record.path,
       targetUrl: record.target_url,
       requestModel: record.request_model,
+      upstreamRequestModel: record.upstream_request_model ?? null,
       apiKeyId: record.api_key_id ?? null,
       apiKeyName: record.api_key_name ?? null,
       originalPayload: record.original_payload,
@@ -1738,6 +1750,7 @@ export async function saveConsoleRequest(record: ConsoleRequestSnapshotInput): P
         path: record.path,
         targetUrl: record.target_url,
         requestModel: record.request_model,
+        upstreamRequestModel: record.upstream_request_model ?? null,
         originalPayload: record.original_payload,
         originalPayloadTruncated: record.original_payload_truncated ? 1 : 0,
         originalSummaryJson: serializeJson(record.original_summary),
@@ -1906,6 +1919,7 @@ export async function listConsoleRequests(
     path: consoleRequests.path,
     target_url: consoleRequests.targetUrl,
     request_model: consoleRequests.requestModel,
+    upstream_request_model: consoleRequests.upstreamRequestModel,
     api_key_id: consoleRequests.apiKeyId,
     api_key_name: consoleRequests.apiKeyName,
     source_request_type: consoleRequests.sourceRequestType,

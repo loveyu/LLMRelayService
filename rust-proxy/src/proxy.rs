@@ -321,7 +321,9 @@ async fn proxy_handler_inner(
 
         let route = active_routes[attempt_index].clone();
         let is_retry = attempt_index == 0 && retry_count > 0;
-        let route_model = rate_limit_cooldown::route_model(route.resolved_model.as_deref(), &model);
+        let route_model = route.upstream_request_model.as_deref().unwrap_or_else(|| {
+            rate_limit_cooldown::route_model(route.resolved_model.as_deref(), &model)
+        });
 
         // 规则是数据库配置、计数是 Rust 内存。满载时不发送上游请求，直接寻找下一个候选。
         let concurrency_rule = {
@@ -413,8 +415,10 @@ async fn proxy_handler_inner(
                     StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST)
                 })?;
             }
-            // Rewrite model name if resolved (alias or model-based route)
-            if let Some(ref resolved) = route.resolved_model
+            // 渠道模型映射只改写发送给上游的请求；它绝不能触发响应模型回写。
+            let upstream_model =
+                route.upstream_request_model.as_ref().or(route.resolved_model.as_ref());
+            if let Some(resolved) = upstream_model
                 && let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&b)
             {
                 json["model"] = serde_json::Value::String(resolved.clone());
@@ -473,6 +477,7 @@ async fn proxy_handler_inner(
                     &uri,
                     pathname,
                     &route,
+                    &model,
                     route_model,
                     &headers,
                     &fwd_headers,
@@ -570,6 +575,7 @@ async fn proxy_handler_inner(
                     &uri,
                     pathname,
                     &route,
+                    &model,
                     route_model,
                     &headers,
                     &fwd_headers,
@@ -646,7 +652,8 @@ async fn proxy_handler_inner(
                     &uri,
                     pathname,
                     &route,
-                    route.resolved_model.as_deref().unwrap_or(&model),
+                    &model,
+                    route_model,
                     &headers,
                     &fwd_headers,
                     &request_body,
@@ -737,7 +744,12 @@ async fn proxy_handler_inner(
         } else {
             None
         };
-        let request_model_for_log = route.resolved_model.as_deref().unwrap_or(&model);
+        // 请求日志永远保留客户端所请求的公开模型；实际转发模型单独记录。
+        let request_model_for_log = &model;
+        let upstream_request_model_for_log = route
+            .upstream_request_model
+            .as_deref()
+            .unwrap_or_else(|| route.resolved_model.as_deref().unwrap_or(&model));
 
         // Fire-and-forget: persist the request before waiting for the upstream response.
         // Axum drops the handler future when the client disconnects. If a non-streaming
@@ -753,6 +765,7 @@ async fn proxy_handler_inner(
             pathname,
             &route,
             request_model_for_log,
+            upstream_request_model_for_log,
             &headers,
             &fwd_headers,
             &request_body,
@@ -1801,7 +1814,7 @@ fn resolve_route(
     providers: &std::collections::HashMap<String, crate::config::ConfigEntry>,
     aliases: &std::collections::HashMap<String, crate::config::AliasTarget>,
 ) -> Option<RouteResult> {
-    if let Some(route) = routing::resolve_explicit_route(pathname, search, providers) {
+    if let Some(route) = routing::resolve_explicit_route(pathname, search, model, providers) {
         return Some(route);
     }
     let routes =
@@ -1968,6 +1981,7 @@ fn send_request_log(
     pathname: &str,
     route: &RouteResult,
     model: &str,
+    upstream_request_model: &str,
     headers: &HeaderMap,
     fwd_headers: &reqwest::header::HeaderMap,
     forwarded_body: &[u8],
@@ -1991,6 +2005,7 @@ fn send_request_log(
     let tu = route.target_url.clone();
     let rp = route.channel_name.clone();
     let rm = model.to_string();
+    let urm = upstream_request_model.to_string();
     let ut = format!("{:?}", route.upstream_type).to_lowercase();
     let oh = serde_json::to_value(
         headers
@@ -2029,6 +2044,7 @@ fn send_request_log(
         url: fu,
         target_url: tu,
         request_model: rm,
+        upstream_request_model: Some(urm),
         original_payload: op,
         forwarded_payload: fp,
         original_headers: oh,
@@ -2160,6 +2176,7 @@ mod tests {
                 auth: None,
                 models: Some(vec![ModelConfig {
                     model: model.to_string(),
+                    upstream_model: None,
                     context: None,
                     extra: serde_json::Map::new(),
                 }]),
@@ -2171,6 +2188,7 @@ mod tests {
                 provider_uuid: None,
                 auto_sync_models: false,
                 claude_code_compat: false,
+                concurrency_rule_id: None,
             };
 
         let mut routing = RoutingTable::from_payload(SyncConfigPayload::default());

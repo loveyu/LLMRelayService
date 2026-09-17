@@ -16,6 +16,7 @@ export const consoleRequests = sqliteTable('console_requests', {
   path: text('path').notNull(),
   targetUrl: text('target_url').notNull(),
   requestModel: text('request_model').notNull(),
+  upstreamRequestModel: text('upstream_request_model'),
   apiKeyId: text('api_key_id'),
   apiKeyName: text('api_key_name'),
   originalPayload: text('original_payload'),

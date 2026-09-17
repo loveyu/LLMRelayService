@@ -19,7 +19,10 @@ export interface RouteAuthConfig {
 }
 
 export interface ModelConfig {
+  /** 对客户端公开、用于路由匹配的模型名。 */
   model: string;
+  /** 实际发送给本渠道上游的模型名；未配置时使用 model。 */
+  upstreamModel?: string;
   context?: number;
   [key: string]: unknown;
 }
@@ -65,6 +68,8 @@ export interface RouteResult {
   responsesMode?: OpenAiResponsesMode;
   /** 当请求 model 是一个别名时，此字段为真实的上游模型名，需要改写请求体 */
   resolvedModel?: string;
+  /** 渠道模型映射后的实际上游模型。仅改写请求，不改写响应。 */
+  upstreamRequestModel?: string;
   /** Public virtual model name that selected this explicit target. */
   virtualModel?: string;
   /**
@@ -159,6 +164,11 @@ function normalizeLegacyModel(item: string | ModelConfig, index: number): ModelC
       throw new Error(`models[${index}].context 必须是正整数`);
     }
     normalized.context = Math.trunc(context);
+  }
+  if ('upstreamModel' in normalized && normalized.upstreamModel != null) {
+    const upstreamModel = normalizeRequiredString(normalized.upstreamModel, `models[${index}].upstreamModel`);
+    if (upstreamModel === model) delete normalized.upstreamModel;
+    else normalized.upstreamModel = upstreamModel;
   }
 
   return normalized;
@@ -370,7 +380,7 @@ function findRouteByModel(model: string, expectedType?: UpstreamType): { channel
   return findRoutesByModel(model, expectedType)[0] ?? null;
 }
 
-function buildRouteResult(channelName: string, entry: ConfigEntry, path: string, search: string): RouteResult {
+function buildRouteResult(channelName: string, entry: ConfigEntry, path: string, search: string, publicModel?: string): RouteResult {
   // 路径拼接规则：
   // - OpenAI 端点：去掉请求路径中的 /v1，用户必须在 targetBaseUrl 中包含 /v1
   //   例如 targetBaseUrl=https://api.openai.com/v1，请求 /v1/chat/completions
@@ -388,12 +398,16 @@ function buildRouteResult(channelName: string, entry: ConfigEntry, path: string,
     if (!normalizedPath) normalizedPath = '/';
   }
 
+  const mappedModel = publicModel
+    ? entry.models?.find((candidate) => getModelId(candidate) === publicModel)?.upstreamModel
+    : undefined;
   return {
     channelName,
     type: providerType,
     targetUrl: entry.targetBaseUrl + normalizedPath + search,
     systemPrompt: entry.systemPrompt,
     auth: entry.auth,
+    ...(mappedModel ? { upstreamRequestModel: mappedModel } : {}),
     ...(entry.claudeCodeCompat === true ? { claudeCodeCompat: true } : {}),
     ...(providerType === 'openai'
       ? { responsesMode: getOpenAiResponsesMode(entry, providerType) }
@@ -409,6 +423,9 @@ function resolveExplicitTargetRoute(pathname: string, search: string, target: Vi
   return {
     ...buildRouteResult(resolvedChannelName, entry, pathname, search),
     resolvedModel: target.model,
+    ...(entry.models?.find((candidate) => getModelId(candidate) === target.model)?.upstreamModel
+      ? { upstreamRequestModel: entry.models.find((candidate) => getModelId(candidate) === target.model)!.upstreamModel }
+      : {}),
   };
 }
 
@@ -788,7 +805,7 @@ export function resolveRoutesForModelFallback(pathname: string, search: string, 
   const expectedType = forcedType ?? inferExpectedProviderType(pathname);
   if (!expectedType) return [];
 
-  return findRoutesByModel(model, expectedType).map((matched) => buildRouteResult(matched.channelName, matched.entry, pathname, search));
+  return findRoutesByModel(model, expectedType).map((matched) => buildRouteResult(matched.channelName, matched.entry, pathname, search, model));
 }
 
 export function resolveRoutesForAnyModelFallback(pathname: string, search: string, forcedType?: UpstreamType): RouteResult[] {
@@ -812,7 +829,7 @@ export function resolveRoutesForAnyModelFallback(pathname: string, search: strin
     if (entry.type !== expectedType) continue;
     for (const model of entry.models ?? []) {
       routes.push({
-        ...buildRouteResult(channelName, entry, pathname, search),
+        ...buildRouteResult(channelName, entry, pathname, search, getModelId(model)),
         resolvedModel: getModelId(model),
       });
     }
@@ -888,7 +905,7 @@ export function resolveRoutesByModel(pathname: string, search: string, model: st
       .filter((route): route is RouteResult => route !== null));
   }
 
-  return findRoutesByModel(model, expectedType).map((matched) => buildRouteResult(matched.channelName, matched.entry, pathname, search));
+  return findRoutesByModel(model, expectedType).map((matched) => buildRouteResult(matched.channelName, matched.entry, pathname, search, model));
 }
 
 export function getModels(): ModelInfo[] {

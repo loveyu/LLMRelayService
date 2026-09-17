@@ -1,0 +1,1 @@
+ALTER TABLE "console_requests" ADD COLUMN "upstream_request_model" text;

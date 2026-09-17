@@ -115,6 +115,7 @@ export type ConsoleRequestListItem = {
   path: string
   target_url: string
   request_model: string
+  upstream_request_model?: string | null
   response_status: number | null
   response_status_text: string
   initial_response_status?: number | null
@@ -247,6 +248,8 @@ export type SortDirection = "asc" | "desc"
 
 export type ProviderModelInfo = {
   model: string
+  /** 仅渠道配置可见，实际发送给上游的模型名。 */
+  upstreamModel?: string
   context?: number
   recentHttpStatuses?: RecentHttpStatusPoint[]
   rateLimitCooldownRemainingMs?: number
