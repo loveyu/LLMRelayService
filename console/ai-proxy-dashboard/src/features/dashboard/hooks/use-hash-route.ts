@@ -6,6 +6,7 @@ export type PageRoute =
   | { page: "monitor" }
   | { page: "usage"; client?: string }
   | { page: "providers" }
+  | { page: "concurrency-rules" }
   | { page: "routes"; tab?: RouteTab }
   | { page: "models" }
   | { page: "keys" }
@@ -27,6 +28,7 @@ function parseHash(): PageRoute {
   if (pageName === "usage") return { page: "usage", client: params.get("client") || undefined }
   if (pageName === "logs") return { page: "logs" }
   if (pageName === "providers") return { page: "providers" }
+  if (pageName === "concurrency-rules") return { page: "concurrency-rules" }
   if (pageName === "models") return { page: "models" }
   if (pageName === "routes") {
     const tab = params.get("tab")

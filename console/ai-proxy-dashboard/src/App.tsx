@@ -8,6 +8,7 @@ import { KeysPage } from "@/features/dashboard/components/keys-page"
 import { LogsPage } from "@/features/dashboard/components/logs-page"
 import { NavBar } from "@/features/dashboard/components/nav-bar"
 import { ProvidersPage } from "@/features/dashboard/components/providers-page"
+import { ConcurrencyRulesPage } from "@/features/dashboard/components/concurrency-rules-page"
 import { ModelsPage } from "@/features/dashboard/components/models-page"
 import { RoutesPage } from "@/features/dashboard/components/routes-page"
 import { RustProxyPage } from "@/features/dashboard/components/rust-proxy-page"
@@ -110,6 +111,8 @@ export function App() {
             onUnauthorized={handleUnauthorized}
           />
         )
+      case "concurrency-rules":
+        return <ConcurrencyRulesPage onUnauthorized={handleUnauthorized} />
       case "models":
         return <ModelsPage onUnauthorized={handleUnauthorized} />
       case "routes":

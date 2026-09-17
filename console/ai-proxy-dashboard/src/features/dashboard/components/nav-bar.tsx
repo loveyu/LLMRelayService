@@ -21,13 +21,14 @@ import {
 import { useLayoutWidth } from "@/hooks/use-layout-width"
 import { cn } from "@/lib/utils"
 
-type Page = "monitor" | "usage" | "providers" | "models" | "routes" | "keys" | "logs" | "settings" | "api" | "system"
+type Page = "monitor" | "usage" | "providers" | "concurrency-rules" | "models" | "routes" | "keys" | "logs" | "settings" | "api" | "system"
 
 const PAGE_SUBTITLE: Record<Page, string> = {
   monitor: "实时流量概览",
   usage: "用量",
   logs: "请求日志",
   providers: "渠道管理",
+  "concurrency-rules": "并发控制",
   models: "模型",
   keys: "密钥管理",
   routes: "路由",
@@ -58,6 +59,7 @@ export function NavBar({
     { page: "usage", label: t("nav.usage") },
     { page: "logs", label: t("nav.logs") },
     { page: "providers", label: t("nav.providers") },
+    { page: "concurrency-rules", label: "并发控制" },
     { page: "models", label: t("nav.models") },
     { page: "keys", label: t("nav.keys") },
     { page: "routes", label: t("nav.routes") },
