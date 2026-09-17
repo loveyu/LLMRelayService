@@ -853,9 +853,7 @@ async function handleProxyRequest(c: any): Promise<Response> {
       if (!failedRouteChain.includes(describeRoute(route))) {
         failedRouteChain.push(describeRoute(route));
       }
-      initialResponseStatus ??= 429;
-      initialResponseStatusText ??= 'Too Many Requests';
-      initialCompletedAt ??= Date.now();
+      // 冷却跳过没有真实上游响应，不能在日志中写成“本次初始 429”。
       saveRequestLogForAttempt({
         route,
         upstreamTargetUrl: attempt.upstreamTargetUrl,

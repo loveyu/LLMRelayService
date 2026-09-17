@@ -249,6 +249,7 @@ export type ProviderModelInfo = {
   model: string
   context?: number
   recentHttpStatuses?: RecentHttpStatusPoint[]
+  rateLimitCooldownRemainingMs?: number
   [key: string]: unknown
 }
 
@@ -313,7 +314,8 @@ export type ProviderMutationPayload = {
 
 export type ConcurrencyRule = { id: string; name: string; maxConcurrency: number; providerCount: number }
 export type ConcurrencyRuntimeRule = { id: string; activeRequests: number; maxConcurrency: number; availableSlots: number }
-export type ConcurrencyRulesPayload = { rules: ConcurrencyRule[]; runtime: ConcurrencyRuntimeRule[] }
+export type ConcurrencyChannelRuntime = { channel: string; activeRequests: number; models: { model: string; activeRequests: number }[] }
+export type ConcurrencyRulesPayload = { rules: ConcurrencyRule[]; runtime: ConcurrencyRuntimeRule[]; channels: ConcurrencyChannelRuntime[] }
 
 export type ManagedApiKey = {
   id: string

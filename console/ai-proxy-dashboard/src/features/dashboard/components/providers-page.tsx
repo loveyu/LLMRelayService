@@ -1434,6 +1434,11 @@ export function ProvidersPage({
                                 className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
                               >
                                 <span>{m.model}</span>
+                                {Number(m.rateLimitCooldownRemainingMs ?? 0) > 0 ? (
+                                  <TooltipProvider>
+                                    <Tooltip><TooltipTrigger asChild><span className="size-2 rounded-full bg-slate-400" /></TooltipTrigger><TooltipContent>429 冷却中，剩余 {formatDuration(m.rateLimitCooldownRemainingMs)}</TooltipContent></Tooltip>
+                                  </TooltipProvider>
+                                ) : null}
                                 {provider.enabled ? (
                                   <RecentHttpStatusDots
                                     label={t("providers.recentModelHttp", { model: m.model })}

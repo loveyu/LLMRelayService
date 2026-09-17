@@ -328,9 +328,14 @@ async fn proxy_handler_inner(
             let rt = state.routing.read().await;
             route.concurrency_rule_id.as_ref().and_then(|id| rt.concurrency_rules.get(id).cloned())
         };
-        let mut concurrency_permit = concurrency_rule
-            .as_ref()
-            .and_then(|rule| state.concurrency_limits.try_acquire(&rule.id, rule.max_concurrency));
+        let mut concurrency_permit = concurrency_rule.as_ref().and_then(|rule| {
+            state.concurrency_limits.try_acquire(
+                &rule.id,
+                rule.max_concurrency,
+                &route.channel_name,
+                route_model,
+            )
+        });
         if let Some(rule) = concurrency_rule.as_ref()
             && concurrency_permit.is_none()
         {
@@ -543,14 +548,8 @@ async fn proxy_handler_inner(
                     failed_route_chain.push(label);
                 }
                 failover_reason = Some("rate_limit_cooldown".to_string());
-                if initial_response_status.is_none() {
-                    initial_response_status = Some(429);
-                    initial_response_status_text = Some("Too Many Requests".to_string());
-                    initial_completed_at = Some(
-                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
-                            as u64,
-                    );
-                }
+                // 冷却跳过并没有向该上游发请求，不能伪造本次请求收到过 429；
+                // 保留 failover_reason=rate_limit_cooldown 作为路由决策证据。
 
                 send_request_log(
                     &state,

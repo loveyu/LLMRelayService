@@ -227,5 +227,7 @@ async fn concurrency_rules_handler(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
 ) -> Json<serde_json::Value> {
     let rules = state.routing.read().await.concurrency_rules.clone();
-    Json(serde_json::json!({ "rules": state.concurrency_limits.snapshot(&rules) }))
+    Json(
+        serde_json::json!({ "rules": state.concurrency_limits.snapshot(&rules), "channels": state.concurrency_limits.channel_snapshot() }),
+    )
 }

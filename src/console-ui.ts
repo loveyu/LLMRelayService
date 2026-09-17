@@ -537,10 +537,12 @@ export function registerConsoleRoutes(app: Hono<any>): void {
 
     await ensureProviderConfigsLoaded();
     const providers = getProviders();
-    const [healthStatuses, recentHttpStatuses] = await Promise.all([
+    const [healthStatuses, recentHttpStatuses, cooldowns] = await Promise.all([
       getProviderHealthStatuses(),
       getProviderRecentHttpStatuses(),
+      getRateLimitCooldowns(),
     ]);
+    const cooldownByRouteModel = new Map(cooldowns.cooldowns.map((item) => [`${item.channel}\u0000${item.model}`, item.remainingMs]));
 
     const providersWithHealth = providers.map((provider) => ({
       ...provider,
@@ -549,6 +551,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
       models: provider.models.map((model) => ({
         ...model,
         recentHttpStatuses: recentHttpStatuses.models.get(provider.channelName)?.get(model.model) ?? [],
+        rateLimitCooldownRemainingMs: cooldownByRouteModel.get(`${provider.channelName}\u0000${model.model}`) ?? 0,
       })),
     }));
 
@@ -563,7 +566,7 @@ export function registerConsoleRoutes(app: Hono<any>): void {
     const runtime = await fetch(`http://127.0.0.1:${rustPort}/admin/concurrency-rules`)
       .then((response) => response.ok ? response.json() : { rules: [] })
       .catch(() => ({ rules: [] }));
-    return c.json({ rules, runtime: (runtime as any).rules ?? [] });
+    return c.json({ rules, runtime: (runtime as any).rules ?? [], channels: (runtime as any).channels ?? [] });
   });
 
   app.post('/__console/api/concurrency-rules', async (c) => {
