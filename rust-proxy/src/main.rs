@@ -1,6 +1,7 @@
 mod app_state;
 mod auth;
 mod circuit_breaker;
+mod concurrency_limit;
 mod config;
 mod failover;
 mod ipc;
@@ -62,6 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/admin/providers/{channel_name}/test", post(provider_test::test_provider_handler))
         .route("/admin/rate-limit-cooldowns", get(rate_limit_admin::list_cooldowns_handler))
         .route("/admin/rate-limit-cooldowns/clear", post(rate_limit_admin::clear_cooldowns_handler))
+        .route("/admin/concurrency-rules", get(concurrency_rules_handler))
         .fallback(proxy::proxy_handler)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(max_body_bytes))
         // axum 的 body 提取器(Bytes/String/Json)另有 DefaultBodyLimit(默认仅 2MB),
@@ -219,4 +221,11 @@ async fn health_handler(
         "service": "rust-proxy",
         "config_synced": synced,
     }))
+}
+
+async fn concurrency_rules_handler(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+) -> Json<serde_json::Value> {
+    let rules = state.routing.read().await.concurrency_rules.clone();
+    Json(serde_json::json!({ "rules": state.concurrency_limits.snapshot(&rules) }))
 }

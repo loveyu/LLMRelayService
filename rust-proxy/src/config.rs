@@ -84,6 +84,16 @@ pub struct ConfigEntry {
     pub auto_sync_models: bool,
     #[serde(default, rename = "claudeCodeCompat")]
     pub claude_code_compat: bool,
+    #[serde(default, rename = "concurrencyRuleId", skip_serializing_if = "Option::is_none")]
+    pub concurrency_rule_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConcurrencyRuleConfig {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "maxConcurrency")]
+    pub max_concurrency: usize,
 }
 
 impl ConfigEntry {
@@ -234,6 +244,8 @@ pub struct ApiKeyInfo {
 pub struct SyncConfigPayload {
     #[serde(default)]
     pub providers: std::collections::HashMap<String, ConfigEntry>,
+    #[serde(default, rename = "concurrencyRules")]
+    pub concurrency_rules: Vec<ConcurrencyRuleConfig>,
     #[serde(default)]
     pub aliases: std::collections::HashMap<String, AliasTarget>,
     #[serde(default = "default_failover")]
@@ -248,6 +260,7 @@ impl Default for SyncConfigPayload {
     fn default() -> Self {
         Self {
             providers: std::collections::HashMap::new(),
+            concurrency_rules: Vec::new(),
             aliases: std::collections::HashMap::new(),
             failover: default_failover(),
             timeouts: default_timeouts(),

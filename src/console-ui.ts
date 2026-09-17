@@ -22,6 +22,7 @@ import {
 import { getGatewayTimeoutSettings, updateGatewayTimeoutSettings } from './gateway-timeouts';
 import { getGatewayFailoverPolicy, updateGatewayFailoverPolicy } from './gateway-failover';
 import { clearRateLimitCooldownRuntime, getRateLimitCooldowns } from './rate-limit-admin';
+import { createConcurrencyRule, deleteConcurrencyRule, listConcurrencyRules, updateConcurrencyRule } from './concurrency-rule-store';
 
 const CONSOLE_COOKIE_NAME = 'CONSOLE_COOKIE_NAME';
 const CONSOLE_UI_DIST_DIR = resolve(import.meta.dir, '..', 'dist', 'frontend');
@@ -552,6 +553,47 @@ export function registerConsoleRoutes(app: Hono<any>): void {
     }));
 
     return c.json({ providers: providersWithHealth });
+  });
+
+  app.get('/__console/api/concurrency-rules', async (c) => {
+    if (!isPasswordConfigured()) return c.json({ error: 'GATEWAY_API_KEY 未设置' }, 503);
+    if (!isAuthenticated(c)) return c.json({ error: '未授权' }, 401);
+    const rules = await listConcurrencyRules();
+    const rustPort = Number(process.env.RUST_PROXY_PORT || 3311);
+    const runtime = await fetch(`http://127.0.0.1:${rustPort}/admin/concurrency-rules`)
+      .then((response) => response.ok ? response.json() : { rules: [] })
+      .catch(() => ({ rules: [] }));
+    return c.json({ rules, runtime: (runtime as any).rules ?? [] });
+  });
+
+  app.post('/__console/api/concurrency-rules', async (c) => {
+    if (!isPasswordConfigured()) return c.json({ error: 'GATEWAY_API_KEY 未设置' }, 503);
+    if (!isAuthenticated(c)) return c.json({ error: '未授权' }, 401);
+    try {
+      const rule = await createConcurrencyRule(await c.req.json().catch(() => ({})) as any);
+      syncConfigToRust().catch(() => {});
+      return c.json(rule, 201);
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
+  });
+
+  app.patch('/__console/api/concurrency-rules/:id', async (c) => {
+    if (!isPasswordConfigured()) return c.json({ error: 'GATEWAY_API_KEY 未设置' }, 503);
+    if (!isAuthenticated(c)) return c.json({ error: '未授权' }, 401);
+    try {
+      const rule = await updateConcurrencyRule(c.req.param('id'), await c.req.json().catch(() => ({})) as any);
+      syncConfigToRust().catch(() => {});
+      return c.json(rule);
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
+  });
+
+  app.delete('/__console/api/concurrency-rules/:id', async (c) => {
+    if (!isPasswordConfigured()) return c.json({ error: 'GATEWAY_API_KEY 未设置' }, 503);
+    if (!isAuthenticated(c)) return c.json({ error: '未授权' }, 401);
+    try {
+      await deleteConcurrencyRule(c.req.param('id'));
+      syncConfigToRust().catch(() => {});
+      return c.json({ ok: true });
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
   });
 
   app.get('/__console/api/providers/:channelName', async (c) => {

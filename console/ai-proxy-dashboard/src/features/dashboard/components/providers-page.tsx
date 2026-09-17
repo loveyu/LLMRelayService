@@ -76,6 +76,7 @@ import {
   deleteProvider,
   fetchProvider,
   fetchProviders,
+  fetchConcurrencyRules,
   fetchUpstreamModels,
   fetchUpstreamModelsPreview,
   testProvider,
@@ -90,6 +91,7 @@ import type {
   RecentHttpStatusPoint,
   RoutingVisibility,
   TestProviderResult,
+  ConcurrencyRule,
 } from "@/features/dashboard/types"
 import { formatDuration, formatTime } from "@/features/dashboard/utils"
 
@@ -276,6 +278,7 @@ type ProviderFormState = {
   extraFieldsJson: string
   autoSyncModels: boolean
   claudeCodeCompat: boolean
+  concurrencyRuleId: string
   models: ModelRowState[]
 }
 
@@ -333,6 +336,7 @@ function createFormState(provider?: ProviderInfo): ProviderFormState {
     })(),
     autoSyncModels: provider?.autoSyncModels ?? false,
     claudeCodeCompat: provider?.claudeCodeCompat ?? false,
+    concurrencyRuleId: provider?.concurrencyRuleId ?? "none",
     models: provider?.models.length
       ? provider.models.map((model) => createModelRow(model))
       : [createModelRow()],
@@ -390,6 +394,7 @@ function buildProviderPayload(
     autoSyncModels: state.autoSyncModels,
     // 服务端对非 anthropic 渠道会强制关掉，这里直接传状态即可。
     claudeCodeCompat: state.claudeCodeCompat,
+    concurrencyRuleId: state.concurrencyRuleId === "none" ? null : state.concurrencyRuleId,
   }
 
   const explicitHeader = state.authHeader === "auto" ? undefined : state.authHeader
@@ -598,6 +603,9 @@ export function ProvidersPage({
   // backend can reliably distinguish channel type by its fixed endpoint.
   const presetLocked = matchPreset(formState.type, formState.targetBaseUrl) !== null
   const [formError, setFormError] = useState("")
+  const [concurrencyRules, setConcurrencyRules] = useState<ConcurrencyRule[]>([])
+
+  useEffect(() => { void fetchConcurrencyRules().then((data) => setConcurrencyRules(data.rules)).catch(() => {}) }, [])
   const [submitPending, setSubmitPending] = useState(false)
   const [testingAll, setTestingAll] = useState(false)
   const [testResults, setTestResults] = useState<TestStatusMap>(new Map())
@@ -1227,6 +1235,18 @@ export function ProvidersPage({
                 ]}
               />
               <FieldDescription>{t("providers.routingVisibilityHint")}</FieldDescription>
+            </Field>
+
+            <Field>
+              <FieldLabel>并发控制规则</FieldLabel>
+              <Select value={formState.concurrencyRuleId} onValueChange={(value) => setFormState((current) => ({ ...current, concurrencyRuleId: value }))}>
+                <SelectTrigger className="w-full"><SelectValue placeholder="不限制" /></SelectTrigger>
+                <SelectContent><SelectGroup>
+                  <SelectItem value="none">不限制</SelectItem>
+                  {concurrencyRules.map((rule) => <SelectItem key={rule.id} value={rule.id}>{rule.name} · 最大 {rule.maxConcurrency}</SelectItem>)}
+                </SelectGroup></SelectContent>
+              </Select>
+              <FieldDescription>绑定同一规则的渠道共享实时并发额度。</FieldDescription>
             </Field>
 
             <Field>

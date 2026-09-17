@@ -118,6 +118,7 @@ export const consoleProviders = sqliteTable('console_providers', {
   enabled: integer('enabled').notNull().default(1),
   autoSyncModels: integer('auto_sync_models').notNull().default(0),
   claudeCodeCompat: integer('claude_code_compat').notNull().default(0),
+  concurrencyRuleId: text('concurrency_rule_id'),
   modelsSyncedAt: integer('models_synced_at', { mode: 'number' }),
   createdAt: integer('created_at', { mode: 'number' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
@@ -125,6 +126,15 @@ export const consoleProviders = sqliteTable('console_providers', {
   createdAtIdx: index('idx_console_providers_created_at').on(table.createdAt),
   updatedAtIdx: index('idx_console_providers_updated_at').on(table.updatedAt),
 }));
+
+/** 配置层规则；实时占用仅存在 rust-proxy 内存。 */
+export const concurrencyRules = sqliteTable('concurrency_rules', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  maxConcurrency: integer('max_concurrency').notNull(),
+  createdAt: integer('created_at', { mode: 'number' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+});
 
 export const modelAliases = sqliteTable('model_aliases', {
   id: integer('id').primaryKey({ autoIncrement: true }),

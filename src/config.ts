@@ -1,6 +1,7 @@
 import { createConsoleProviderEntry, deleteConsoleProviderEntry, listConsoleProviderEntries, toggleConsoleProviderEntry, updateConsoleProviderEntry, updateConsoleProviderModels } from './console-provider-store';
 import { listModelAliases } from './console-model-alias-store';
 import { fetchUpstreamModelIds } from './upstream-models';
+import { getConcurrencyRuleIds } from './concurrency-rule-store';
 
 export type UpstreamType = 'anthropic' | 'openai';
 export type RouteAuthHeader = 'x-api-key' | 'authorization';
@@ -49,6 +50,7 @@ export interface ConfigEntry {
    * 内容能原样抵达模型（cloak 只动 system，不碰 messages）。
    */
   claudeCodeCompat?: boolean;
+  concurrencyRuleId?: string;
 }
 
 export interface RouteResult {
@@ -94,6 +96,7 @@ export interface ProviderInfo {
   providerUuid: string;
   autoSyncModels: boolean;
   claudeCodeCompat: boolean;
+  concurrencyRuleId: string | null;
 }
 
 export interface ProviderMutationAuthInput {
@@ -114,6 +117,7 @@ export interface ProviderMutationInput {
   extraFields?: Record<string, unknown> | null;
   autoSyncModels?: boolean | null;
   claudeCodeCompat?: boolean | null;
+  concurrencyRuleId?: string | null;
   enabled?: boolean | null;
 }
 
@@ -459,6 +463,7 @@ function buildProviderInfo(
     providerUuid: entry.providerUuid ?? '',
     autoSyncModels: entry.autoSyncModels === true,
     claudeCodeCompat: entry.claudeCodeCompat === true,
+    concurrencyRuleId: entry.concurrencyRuleId ?? null,
   };
 }
 
@@ -700,6 +705,10 @@ function buildNormalizedEntry(payload: ProviderMutationInput, existingEntry?: Co
   if (extraFields && Object.keys(extraFields).length > 0) normalized.extraFields = extraFields;
   if (autoSyncModels) normalized.autoSyncModels = true;
   if (claudeCodeCompat) normalized.claudeCodeCompat = true;
+  const concurrencyRuleId = payload.concurrencyRuleId === undefined
+    ? existingEntry?.concurrencyRuleId
+    : normalizeOptionalString(payload.concurrencyRuleId);
+  if (concurrencyRuleId) normalized.concurrencyRuleId = concurrencyRuleId;
   if (!enabled) normalized.enabled = false;
 
   return normalized;
@@ -716,6 +725,13 @@ function validateConsoleCandidate(channelName: string, entry: ConfigEntry, exist
     delete nextProviderConfigs[existingChannelName];
   }
   setProviderConfigs(nextProviderConfigs);
+}
+
+async function validateConcurrencyRuleBinding(entry: ConfigEntry): Promise<void> {
+  if (!entry.concurrencyRuleId) return;
+  if (!(await getConcurrencyRuleIds()).has(entry.concurrencyRuleId)) {
+    throw new Error('并发规则不存在或已被删除');
+  }
 }
 
 function restoreProviderConfigs(snapshot: Record<string, ConfigEntry>): void {
@@ -968,6 +984,7 @@ export async function createProvider(input: ProviderMutationInput): Promise<Prov
   }
 
   const entry = buildNormalizedEntry(input);
+  await validateConcurrencyRuleBinding(entry);
 
   // 开启自动同步时立即拉取上游模型：失败则整体报错，成功则用上游列表覆盖模型列表。
   if (entry.autoSyncModels) {
@@ -1001,6 +1018,7 @@ export async function updateProvider(channelName: string, input: ProviderMutatio
     ? normalizedChannelName
     : normalizeChannelName(input.channelName);
   const entry = buildNormalizedEntry(input, existingEntry);
+  await validateConcurrencyRuleBinding(entry);
 
   // 「自动同步」被开启时（新开启，或已开启且改动了地址/认证）立即拉取上游模型，
   // 失败则整体报错、不落库；成功则用上游列表覆盖模型列表。

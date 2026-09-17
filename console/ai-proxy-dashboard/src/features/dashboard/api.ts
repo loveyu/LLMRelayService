@@ -22,6 +22,7 @@ import type {
   UpdateModelMetadataPayload,
   RustProxyStatus,
   RateLimitCooldownsPayload,
+  ConcurrencyRulesPayload,
 } from "@/features/dashboard/types"
 
 export const DEFAULT_REQUEST_LIMIT = 50
@@ -150,6 +151,10 @@ export async function logout(): Promise<void> {
 
 export function fetchProviders(): Promise<ConsoleProvidersPayload> {
   return requestJson("/__console/api/providers")
+}
+
+export function fetchConcurrencyRules(): Promise<ConcurrencyRulesPayload> {
+  return requestJson("/__console/api/concurrency-rules")
 }
 
 export function fetchProvider(channelName: string): Promise<ProviderInfo> {

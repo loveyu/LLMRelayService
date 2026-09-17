@@ -1,6 +1,7 @@
 use crate::app_state::AppState;
 use crate::auth;
 use crate::circuit_breaker::{self, Admission};
+use crate::concurrency_limit::ConcurrencyPermit;
 use crate::failover::{self, FailoverTrigger};
 use crate::ipc::RustToTsMessage;
 use crate::rate_limit_cooldown;
@@ -39,6 +40,24 @@ const HOP_BY_HOP_HEADERS: &[&str] = &[
 ];
 
 const CLIENT_CLOSED_REQUEST_STATUS: u16 = 499;
+
+/// 将并发 permit 绑定到下游 body 的生命周期；SSE 直到客户端/上游关闭才释放槽位。
+struct ReleaseConcurrencyBody {
+    inner: Body,
+    _permit: ConcurrencyPermit,
+}
+
+impl http_body::Body for ReleaseConcurrencyBody {
+    type Data = Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        Pin::new(&mut self.inner).poll_frame(cx)
+    }
+}
 
 /// Records a downstream disconnect when Axum drops the in-flight handler future.
 /// The guard is armed only after RequestLog has entered the same IPC queue, so the
@@ -303,6 +322,41 @@ async fn proxy_handler_inner(
         let route = active_routes[attempt_index].clone();
         let is_retry = attempt_index == 0 && retry_count > 0;
         let route_model = rate_limit_cooldown::route_model(route.resolved_model.as_deref(), &model);
+
+        // 规则是数据库配置、计数是 Rust 内存。满载时不发送上游请求，直接寻找下一个候选。
+        let concurrency_rule = {
+            let rt = state.routing.read().await;
+            route.concurrency_rule_id.as_ref().and_then(|id| rt.concurrency_rules.get(id).cloned())
+        };
+        let mut concurrency_permit = concurrency_rule
+            .as_ref()
+            .and_then(|rule| state.concurrency_limits.try_acquire(&rule.id, rule.max_concurrency));
+        if let Some(rule) = concurrency_rule.as_ref()
+            && concurrency_permit.is_none()
+        {
+            let skipped = format!("{} (并发规则 {} 已满)", describe_route(&route), rule.name);
+            failed_route_chain.push(skipped.clone());
+            if advance_to_next_route(
+                &mut active_routes,
+                &mut attempt_index,
+                &failover_policy,
+                &model,
+                &state,
+                pathname,
+                search,
+                request_type.clone(),
+                &stripped_path,
+            ) {
+                failover_reason = Some("concurrency_limit".to_string());
+                continue;
+            }
+            // 所有候选都已满：按可用性优先原则放行当前渠道，交给上游/外层自行排队。
+            warn!(
+                "All candidate routes are concurrency-limited; bypassing limit for {}",
+                route.channel_name
+            );
+            concurrency_permit = None;
+        }
 
         let t_total = Instant::now();
 
@@ -883,7 +937,14 @@ async fn proxy_handler_inner(
                         t_total.as_secs_f64() * 1000.0,
                         status,
                     );
-                    return Ok(result.response);
+                    let mut response = result.response;
+                    if let Some(permit) = concurrency_permit.take() {
+                        *response.body_mut() = Body::new(ReleaseConcurrencyBody {
+                            inner: std::mem::take(response.body_mut()),
+                            _permit: permit,
+                        });
+                    }
+                    return Ok(response);
                 }
 
                 if status == 429 {

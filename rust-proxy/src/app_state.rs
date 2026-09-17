@@ -1,4 +1,5 @@
 use crate::circuit_breaker::CircuitBreaker;
+use crate::concurrency_limit::ConcurrencyLimits;
 use crate::config::{
     AliasTarget, ApiKeyInfo, ConfigEntry, GatewayFailoverPolicy, GatewayTimeoutSettings,
 };
@@ -33,6 +34,7 @@ pub struct RoutingTable {
     pub failover: GatewayFailoverPolicy,
     pub timeouts: GatewayTimeoutSettings,
     pub api_keys: HashMap<String, ApiKeyInfo>,
+    pub concurrency_rules: HashMap<String, crate::config::ConcurrencyRuleConfig>,
 }
 
 impl RoutingTable {
@@ -56,6 +58,11 @@ impl RoutingTable {
             failover: payload.failover,
             timeouts: payload.timeouts,
             api_keys: api_keys_map,
+            concurrency_rules: payload
+                .concurrency_rules
+                .into_iter()
+                .map(|rule| (rule.id.clone(), rule))
+                .collect(),
         }
     }
 }
@@ -66,6 +73,7 @@ pub struct AppState {
     http_client: Arc<RwLock<UpstreamHttpClient>>,
     pub circuit_breaker: Arc<CircuitBreaker>,
     pub rate_limit_cooldowns: Arc<RateLimitCooldowns>,
+    pub concurrency_limits: Arc<ConcurrencyLimits>,
     pub config_synced: Arc<RwLock<bool>>,
     config_synced_notify: Arc<Notify>,
     pub gateway_admin_key: Arc<String>,
@@ -87,6 +95,7 @@ impl AppState {
             })),
             circuit_breaker: Arc::new(CircuitBreaker::default()),
             rate_limit_cooldowns: Arc::new(RateLimitCooldowns::default()),
+            concurrency_limits: Arc::new(ConcurrencyLimits::default()),
             config_synced: Arc::new(RwLock::new(false)),
             config_synced_notify: Arc::new(Notify::new()),
             gateway_admin_key: Arc::new(gateway_admin_key),

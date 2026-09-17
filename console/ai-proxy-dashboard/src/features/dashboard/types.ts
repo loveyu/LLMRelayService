@@ -282,6 +282,7 @@ export type ProviderInfo = {
   providerUuid: string
   autoSyncModels?: boolean
   claudeCodeCompat?: boolean
+  concurrencyRuleId?: string | null
   healthStatus?: "healthy" | "degraded" | "down" | "no-data"
   recentHttpStatuses?: RecentHttpStatusPoint[]
 }
@@ -307,7 +308,12 @@ export type ProviderMutationPayload = {
   autoSyncModels?: boolean
   claudeCodeCompat?: boolean
   enabled?: boolean
+  concurrencyRuleId?: string | null
 }
+
+export type ConcurrencyRule = { id: string; name: string; maxConcurrency: number; providerCount: number }
+export type ConcurrencyRuntimeRule = { id: string; activeRequests: number; maxConcurrency: number; availableSlots: number }
+export type ConcurrencyRulesPayload = { rules: ConcurrencyRule[]; runtime: ConcurrencyRuntimeRule[] }
 
 export type ManagedApiKey = {
   id: string

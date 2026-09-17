@@ -30,6 +30,7 @@ type RustToTsMessage =
 
 interface SyncConfigPayload {
   providers: Record<string, ConfigEntry>;
+  concurrencyRules: Array<{ id: string; name: string; maxConcurrency: number }>;
   aliases: Record<string, AliasTarget>;
   failover: GatewayFailoverPolicy;
   timeouts: GatewayTimeoutSettings;
@@ -50,6 +51,7 @@ interface ConfigEntry {
   providerUuid?: string;
   autoSyncModels?: boolean;
   claudeCodeCompat?: boolean;
+  concurrencyRuleId?: string;
 }
 
 interface AliasTarget {
@@ -358,20 +360,23 @@ async function buildSyncConfigPayload(): Promise<SyncConfigPayload> {
     { listModelAliases },
     { getGatewayFailoverPolicy },
     { getGatewayTimeoutSettings },
+    { listConcurrencyRules },
     { createHash },
   ] = await Promise.all([
     import('./console-provider-store'),
     import('./console-model-alias-store'),
     import('./gateway-failover'),
     import('./gateway-timeouts'),
+    import('./concurrency-rule-store'),
     import('node:crypto'),
   ]);
 
-  const [providers, aliasesRaw, failoverView, timeoutsView] = await Promise.all([
+  const [providers, aliasesRaw, failoverView, timeoutsView, concurrencyRules] = await Promise.all([
     listConsoleProviderEntries(),
     listModelAliases(),
     getGatewayFailoverPolicy(),
     getGatewayTimeoutSettings(),
+    listConcurrencyRules(),
   ]);
 
   // Build aliases map (only enabled)
@@ -418,6 +423,7 @@ async function buildSyncConfigPayload(): Promise<SyncConfigPayload> {
 
   return {
     providers,
+    concurrencyRules: concurrencyRules.map(({ id, name, maxConcurrency }) => ({ id, name, maxConcurrency })),
     aliases,
     failover: {
       enabled: failoverView.enabled,

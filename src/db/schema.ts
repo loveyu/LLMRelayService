@@ -13,6 +13,7 @@ const active = getDbDriver() === 'sqlite' ? sqliteSchema : pgSchema;
 export const consoleRequests = active.consoleRequests as unknown as typeof pgSchema.consoleRequests;
 export const consoleApiKeys = active.consoleApiKeys as unknown as typeof pgSchema.consoleApiKeys;
 export const consoleProviders = active.consoleProviders as unknown as typeof pgSchema.consoleProviders;
+export const concurrencyRules = active.concurrencyRules as unknown as typeof pgSchema.concurrencyRules;
 export const modelAliases = active.modelAliases as unknown as typeof pgSchema.modelAliases;
 export const modelCatalogCache = active.modelCatalogCache as unknown as typeof pgSchema.modelCatalogCache;
 export const modelMetadataOverrides = active.modelMetadataOverrides as unknown as typeof pgSchema.modelMetadataOverrides;

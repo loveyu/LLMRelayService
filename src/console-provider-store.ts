@@ -31,6 +31,7 @@ interface ConfigEntry {
   providerUuid?: string;
   autoSyncModels?: boolean;
   claudeCodeCompat?: boolean;
+  concurrencyRuleId?: string;
 }
 
 const db = createDbClient();
@@ -98,6 +99,7 @@ function rowToConfigEntry(row: typeof consoleProviders.$inferSelect): ConfigEntr
     providerUuid: row.providerUuid || '',
     ...(row.autoSyncModels === 1 ? { autoSyncModels: true } : {}),
     ...(row.claudeCodeCompat === 1 ? { claudeCodeCompat: true } : {}),
+    ...(row.concurrencyRuleId ? { concurrencyRuleId: row.concurrencyRuleId } : {}),
   };
 }
 
@@ -119,6 +121,7 @@ function serializeEntry(channelName: string, entry: ConfigEntry, now = Date.now(
     enabled: entry.enabled !== false ? 1 : 0,
     autoSyncModels: entry.autoSyncModels ? 1 : 0,
     claudeCodeCompat: entry.claudeCodeCompat ? 1 : 0,
+    concurrencyRuleId: entry.concurrencyRuleId ?? null,
     createdAt: now,
     updatedAt: now,
   };
@@ -175,6 +178,7 @@ export async function upsertConsoleProviderEntry(channelName: string, entry: Con
         enabled: entry.enabled !== false ? 1 : 0,
         autoSyncModels: entry.autoSyncModels ? 1 : 0,
         claudeCodeCompat: entry.claudeCodeCompat ? 1 : 0,
+        concurrencyRuleId: entry.concurrencyRuleId ?? null,
         updatedAt: now,
       },
     });
@@ -205,6 +209,7 @@ export async function updateConsoleProviderEntry(currentChannelName: string, nex
       enabled: entry.enabled !== false ? 1 : 0,
       autoSyncModels: entry.autoSyncModels ? 1 : 0,
       claudeCodeCompat: entry.claudeCodeCompat ? 1 : 0,
+      concurrencyRuleId: entry.concurrencyRuleId ?? null,
       updatedAt: now,
     })
     .where(eq(consoleProviders.channelName, currentChannelName))
