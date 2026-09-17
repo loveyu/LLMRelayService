@@ -38,6 +38,10 @@ impl Drop for ConcurrencyPermit {
 }
 
 impl ConcurrencyLimits {
+    pub fn current(&self, rule_id: &str) -> usize {
+        self.active.lock().ok().and_then(|active| active.rules.get(rule_id).copied()).unwrap_or(0)
+    }
+
     pub fn try_acquire(
         &self,
         rule_id: &str,

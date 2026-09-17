@@ -352,7 +352,11 @@ async fn proxy_handler_inner(
                 request_type.clone(),
                 &stripped_path,
             ) {
-                failover_reason = Some("concurrency_limit".to_string());
+                let current = state.concurrency_limits.current(&rule.id);
+                failover_reason = Some(format!(
+                    "并发规则已满：渠道 {}，模型 {}，规则 {}，当前 {}/{}",
+                    route.channel_name, route_model, rule.name, current, rule.max_concurrency
+                ));
                 continue;
             }
             // 所有候选都已满：按可用性优先原则放行当前渠道，交给上游/外层自行排队。
@@ -551,7 +555,10 @@ async fn proxy_handler_inner(
                 if !failed_route_chain.contains(&label) {
                     failed_route_chain.push(label);
                 }
-                failover_reason = Some("rate_limit_cooldown".to_string());
+                failover_reason = Some(format!(
+                    "429 冷却中：渠道 {}，模型 {}，剩余 {} 秒",
+                    route.channel_name, route_model, retry_after_seconds
+                ));
                 // 冷却跳过并没有向该上游发请求，不能伪造本次请求收到过 429；
                 // 保留 failover_reason=rate_limit_cooldown 作为路由决策证据。
 
@@ -984,7 +991,12 @@ async fn proxy_handler_inner(
                     if !failed_route_chain.contains(&label) {
                         failed_route_chain.push(label);
                     }
-                    failover_reason = Some(describe_trigger(&trigger));
+                    failover_reason = Some(match trigger {
+                        FailoverTrigger::Status(429) => {
+                            format!("HTTP 429：渠道 {}，模型 {}", route.channel_name, route_model)
+                        }
+                        _ => describe_trigger(&trigger),
+                    });
                 }
                 if failover_policy.enabled
                     && failover::should_trigger_failover(&failover_policy, &trigger)

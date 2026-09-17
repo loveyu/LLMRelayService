@@ -849,7 +849,7 @@ async function handleProxyRequest(c: any): Promise<Response> {
     );
     if (cooldownRemainingMs != null) {
       lastFailureTrigger = { kind: 'status', status: 429 };
-      failoverReason = 'rate_limit_cooldown';
+      failoverReason = `429 冷却中：渠道 ${route.channelName}，模型 ${routeModel}`;
       if (!failedRouteChain.includes(describeRoute(route))) {
         failedRouteChain.push(describeRoute(route));
       }
@@ -1037,7 +1037,9 @@ async function handleProxyRequest(c: any): Promise<Response> {
     const statusTrigger: FailoverTrigger = { kind: 'status', status: upstreamResponse.status };
     if (shouldContinueAfterFailure(failoverPolicy, statusTrigger, retryIndexForRoute)) {
       lastFailureTrigger = statusTrigger;
-      const reason = describeFailoverTrigger(statusTrigger);
+      const reason = upstreamResponse.status === 429
+        ? `HTTP 429：渠道 ${route.channelName}，模型 ${routeModel}`
+        : describeFailoverTrigger(statusTrigger);
       failoverReason = reason;
       console.warn('[REQ_FAILOVER_STATUS]', {
         request_id: requestId,
