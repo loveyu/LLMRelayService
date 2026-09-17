@@ -141,6 +141,12 @@ fn convert_input_item(item: &Value, prefix: &str) -> Result<Option<Value>, (u16,
         "reasoning" => return Ok(None),
         "function_call" => return convert_function_call(item, prefix),
         "function_call_output" => return convert_function_call_output(item, prefix),
+        // Codex 的内置工具（例如 exec）使用 custom_tool_call，而不是 OpenAI
+        // Chat Completions 可表达的 function_call。不能让它落入通用分支，否则
+        // 会生成 role="" 的空消息，智谱会以 1214 拒绝整个请求。保留其上下文，
+        // 但将其降级为一对合法的文本消息。
+        "custom_tool_call" => return convert_custom_tool_call(item, prefix),
+        "custom_tool_call_output" => return convert_custom_tool_call_output(item, prefix),
         "item_reference" => {
             return Err((400, format!("item_reference not supported in chat compat ({})", prefix)));
         }
@@ -174,6 +180,26 @@ fn convert_input_item(item: &Value, prefix: &str) -> Result<Option<Value>, (u16,
     }
 
     Ok(Some(msg))
+}
+
+fn convert_custom_tool_call(item: &Value, _prefix: &str) -> Result<Option<Value>, (u16, String)> {
+    let name = item["name"].as_str().unwrap_or("custom_tool");
+    let input = item.get("input").map(Value::to_string).unwrap_or_default();
+    Ok(Some(json!({
+        "role": "assistant",
+        "content": format!("[调用自定义工具 {name}]\n{input}"),
+    })))
+}
+
+fn convert_custom_tool_call_output(
+    item: &Value,
+    _prefix: &str,
+) -> Result<Option<Value>, (u16, String)> {
+    let output = item.get("output").map(Value::to_string).unwrap_or_default();
+    Ok(Some(json!({
+        "role": "user",
+        "content": format!("[自定义工具输出]\n{output}"),
+    })))
 }
 
 fn convert_function_call(item: &Value, prefix: &str) -> Result<Option<Value>, (u16, String)> {
@@ -1021,6 +1047,43 @@ mod tests {
                 "https://upstream.example/v1/responses?trace=true&mode=compat"
             ),
             "https://upstream.example/v1/chat/completions?trace=true&mode=compat"
+        );
+    }
+
+    #[test]
+    fn converts_codex_custom_tool_items_to_valid_chat_messages() {
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "input": [
+                {"role": "user", "content": "继续处理"},
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_1",
+                    "name": "functions.exec",
+                    "input": "rg --files"
+                },
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_1",
+                    "output": "src/main.rs"
+                }
+            ]
+        });
+
+        let converted = convert_responses_to_chat_request(&serde_json::to_vec(&body).unwrap())
+            .expect("custom tool items should be converted");
+        let chat: Value = serde_json::from_slice(&converted).unwrap();
+        let messages = chat["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert!(messages[1]["content"].as_str().unwrap().contains("functions.exec"));
+        assert_eq!(messages[2]["role"], "user");
+        assert!(messages[2]["content"].as_str().unwrap().contains("src/main.rs"));
+        assert!(
+            messages
+                .iter()
+                .all(|message| { message["role"].as_str().is_some_and(|role| !role.is_empty()) })
         );
     }
 
