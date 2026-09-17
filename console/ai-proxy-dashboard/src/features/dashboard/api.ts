@@ -157,6 +157,10 @@ export function fetchConcurrencyRules(): Promise<ConcurrencyRulesPayload> {
   return requestJson("/__console/api/concurrency-rules")
 }
 
+export function createConcurrencyRule(payload: { name: string; maxConcurrency: number }): Promise<void> {
+  return requestJson("/__console/api/concurrency-rules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+}
+
 export function fetchProvider(channelName: string): Promise<ProviderInfo> {
   return requestJson(`/__console/api/providers/${encodeURIComponent(channelName)}`)
 }

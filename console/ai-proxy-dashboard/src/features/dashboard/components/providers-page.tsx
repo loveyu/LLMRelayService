@@ -77,6 +77,7 @@ import {
   fetchProvider,
   fetchProviders,
   fetchConcurrencyRules,
+  createConcurrencyRule,
   fetchUpstreamModels,
   fetchUpstreamModelsPreview,
   testProvider,
@@ -604,8 +605,23 @@ export function ProvidersPage({
   const presetLocked = matchPreset(formState.type, formState.targetBaseUrl) !== null
   const [formError, setFormError] = useState("")
   const [concurrencyRules, setConcurrencyRules] = useState<ConcurrencyRule[]>([])
+  const [newConcurrencyRuleName, setNewConcurrencyRuleName] = useState("")
+  const [newConcurrencyRuleMax, setNewConcurrencyRuleMax] = useState("1")
 
   useEffect(() => { void fetchConcurrencyRules().then((data) => setConcurrencyRules(data.rules)).catch(() => {}) }, [])
+  const reloadConcurrencyRules = useCallback(async () => {
+    const data = await fetchConcurrencyRules()
+    setConcurrencyRules(data.rules)
+  }, [])
+  async function addConcurrencyRule() {
+    try {
+      await createConcurrencyRule({ name: newConcurrencyRuleName.trim(), maxConcurrency: Number(newConcurrencyRuleMax) })
+      setNewConcurrencyRuleName("")
+      setNewConcurrencyRuleMax("1")
+      await reloadConcurrencyRules()
+      toast.success("并发规则已创建")
+    } catch (err) { toast.error(err instanceof Error ? err.message : String(err)) }
+  }
   const [submitPending, setSubmitPending] = useState(false)
   const [testingAll, setTestingAll] = useState(false)
   const [testResults, setTestResults] = useState<TestStatusMap>(new Map())
@@ -1289,6 +1305,17 @@ export function ProvidersPage({
   return (
     <>
       <div className="flex h-full flex-col">
+        <Card className="m-4 mb-0 shrink-0">
+          <CardHeader className="flex-row items-center justify-between gap-4 border-b py-3">
+            <div><div className="text-sm font-semibold">并发控制规则</div><div className="text-xs text-muted-foreground">多个渠道绑定同一规则时共享 Rust 内存中的并发额度。</div></div>
+            <div className="flex items-center gap-2">
+              <Input value={newConcurrencyRuleName} onChange={(event) => setNewConcurrencyRuleName(event.target.value)} placeholder="规则名称" className="h-8 w-36 text-xs" />
+              <Input value={newConcurrencyRuleMax} onChange={(event) => setNewConcurrencyRuleMax(event.target.value)} inputMode="numeric" placeholder="最大并发" className="h-8 w-24 text-xs" />
+              <Button type="button" size="sm" onClick={() => void addConcurrencyRule()}><Plus data-icon="inline-start" />新建规则</Button>
+            </div>
+          </CardHeader>
+          {concurrencyRules.length ? <CardContent className="flex flex-wrap gap-x-5 gap-y-2 py-3 text-xs">{concurrencyRules.map((rule) => <span key={rule.id} className="font-mono">{rule.name} · 上限 {rule.maxConcurrency} · 已绑定 {rule.providerCount} 渠道</span>)}</CardContent> : null}
+        </Card>
         {providers.length === 0 ? (
           <Empty className="border">
             <EmptyHeader>
